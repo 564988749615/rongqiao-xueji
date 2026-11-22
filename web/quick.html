@@ -32,10 +32,11 @@
           <div class="quick-upload-text"><b id="upload-title">拖入原始成绩表</b><p id="upload-description">表格应包含班级和各科成绩，姓名或学号可选。</p></div>
           <label class="btn primary quick-file-button" for="file-input">选择成绩文件<input id="file-input" type="file" accept=".xlsx,.xlsm,.csv" aria-label="选择成绩文件"></label>
           <button id="example-button" class="quick-text-button" type="button">使用已提供的原始数据.xlsx</button>
+          <button id="retry-upload-button" class="quick-text-button" type="button" hidden>重新读取当前文件</button>
         </div>
         <div class="quick-import-fields">
           <label class="field"><span>考试名称</span><input id="exam-name" type="text" maxlength="100" placeholder="如：初三定时练习（二）"></label>
-          <div class="quick-field-row"><label class="field"><span>年级</span><input id="exam-grade" type="text" maxlength="30" value="初三" placeholder="如：初三" list="grade-options"><datalist id="grade-options"><option value="初一"><option value="初二"><option value="初三"><option value="高一"><option value="高二"><option value="高三"></datalist></label><label class="field"><span>考试日期</span><input id="exam-date" type="date" value="2026-10-19"></label></div>
+          <div class="quick-field-row"><label class="field"><span>年级</span><input id="exam-grade" type="text" maxlength="30" value="初三" placeholder="如：初三" list="grade-options"><datalist id="grade-options"><option value="初一"><option value="初二"><option value="初三"><option value="高一"><option value="高二"><option value="高三"></datalist></label><label class="field"><span>考试日期</span><input id="exam-date" type="date"></label></div>
           <details class="quick-password"><summary>文件有打开密码</summary><label class="field"><span>密码 <small>仅用于本次读取</small></span><input id="file-password" type="password" autocomplete="off" placeholder="加密文件选填"></label></details>
         </div>
       </div>
@@ -49,15 +50,46 @@
         <div class="quick-rule-group"><span class="quick-field-label">纳入班级</span><div class="quick-segment" role="group" aria-label="纳入班级"><button type="button" data-scope="all" class="selected" aria-pressed="true">全部班级</button><button type="button" data-scope="first20" aria-pressed="false">01—20 班</button><button type="button" data-scope="custom" aria-pressed="false">自选班级</button></div><div id="class-options" class="quick-check-options" hidden></div><p id="scope-caption" class="quick-field-note"></p></div>
         <div class="quick-rule-group"><span class="quick-field-label">计入总分的科目</span><div id="subject-options" class="quick-check-options"></div><p class="quick-field-note">按实际提供的科目计算，体育需有对应成绩列。</p></div>
       </div>
-      <details id="advanced-rules" class="quick-advanced"><summary>更多计算设置 <span>有效分比例、零分处理、满分</span></summary>
+      <details id="advanced-rules" class="quick-advanced"><summary>自定义计算口径 <span>有效分、并列规则、名次节点、等级比例、满分与参数表</span></summary>
         <div class="quick-advanced-grid">
-          <label class="field"><span>有效分取前多少</span><div class="quick-suffix-input"><input id="cutoff-ratio" type="number" value="30" min="1" max="100" step="0.1"><span>%</span></div></label>
+          <label class="field"><span>有效分取前多少</span><div class="quick-suffix-input"><input id="cutoff-ratio" type="number" value="30" min="0.1" max="100" step="0.1"><span>%</span></div></label>
+          <label class="field"><span>参考名次取整</span><select id="cutoff-rounding"><option value="floor" selected>向下取整（floor）</option><option value="round">四舍五入（round）</option><option value="ceil">向上取整（ceil）</option></select></label>
+          <label class="field"><span>并列名次规则</span><select id="tie-mode"><option value="competition" selected>跳号（1, 1, 3）</option><option value="dense">不跳号（1, 1, 2）</option></select></label>
           <label class="field"><span>零分处理</span><select id="zero-policy"><option value="exclude">不计入实考人数和均分</option><option value="include">按真实零分计入</option></select></label>
           <label class="field"><span>缺少科目成绩时</span><select id="missing-policy"><option value="exclude_total">不生成该生总分和排名</option><option value="zero">按 0 分合计总分</option></select></label>
           <label class="field"><span>每人输出薄弱科数量</span><select id="weak-count"><option value="1">1 科</option><option value="2">2 科</option><option value="3">3 科</option><option value="4" selected>4 科</option><option value="5">5 科</option><option value="6">6 科</option><option value="7">7 科</option></select></label>
+          <label class="field"><span>分数段间隔（分）</span><input id="score-bin-step" type="number" value="50" min="1" max="500" step="1"></label>
+          <label class="field quick-span-full"><span>前 N 名次节点 <small>逗号分隔的正整数</small></span><input id="top-nodes" type="text" value="50,100,150,200,250,300,350,400,450,500,600,700,800" placeholder="50,100,200,300,400,500,600,700,800"></label>
         </div>
-        <div class="quick-marks-section"><span class="quick-field-label">科目满分 <small>选填，填写后可计算得分率</small></span><div id="full-mark-options" class="quick-full-marks"></div></div>
-        <p class="quick-field-note">默认将数值 0 与缺失区分；0 分仍可参与有效总分人群中的单科排名。薄弱科按名次差排序，同值按科目顺序取不同学科。</p>
+        <div class="quick-grades-section">
+          <div class="quick-marks-head">
+            <span class="quick-field-label">自定义等级比例 <small>累计比例须递增，末档为 100%，可增删档位</small></span>
+            <div id="quick-grade-presets" class="quick-mark-presets">
+              <button type="button" data-quick-grade-preset="default">默认（A 30% / 六级 18,30,55,80,90,100）</button>
+              <button type="button" data-quick-grade-preset="2040">20%/40% 双线（A 40% / 六级 20,40,60,80,90,100）</button>
+              <button type="button" data-quick-grade-preset="abcd4">ABCD 四级（25,55,85,100）</button>
+            </div>
+          </div>
+          <div class="quick-grades-grid">
+            <div class="quick-grade-box">
+              <div class="quick-grade-box-head"><span>学生等级（发年级）</span><button type="button" class="quick-text-button" style="margin:0" data-quick-grade-add="abc">+ 新增一档</button></div>
+              <table class="quick-grade-table"><thead><tr><th>等级</th><th>累计上限 %</th><th></th></tr></thead><tbody id="quick-abc-body"></tbody></table>
+            </div>
+            <div class="quick-grade-box">
+              <div class="quick-grade-box-head"><span>分层等级（六级/自定义）</span><button type="button" class="quick-text-button" style="margin:0" data-quick-grade-add="lvl">+ 新增一档</button></div>
+              <table class="quick-grade-table"><thead><tr><th>等级</th><th>累计上限 %</th><th></th></tr></thead><tbody id="quick-lvl-body"></tbody></table>
+            </div>
+          </div>
+        </div>
+        <div class="quick-marks-section"><div class="quick-marks-head"><span class="quick-field-label">科目满分 <small>选填，需确认后才计算得分率</small></span><div id="full-mark-presets" class="quick-mark-presets"></div></div><div id="full-mark-options" class="quick-full-marks"></div></div>
+        <div class="quick-rules-io">
+          <button type="button" class="btn secondary" id="quick-rules-import-btn">导入参数表…</button>
+          <input type="file" id="quick-rules-import-file" accept=".json" hidden>
+          <button type="button" class="btn secondary" id="quick-rules-export-btn">导出参数表…</button>
+          <button type="button" class="btn secondary" id="quick-rules-default-btn">设为全校默认口径</button>
+          <button type="button" class="btn secondary" id="quick-rules-reset-btn">恢复默认</button>
+        </div>
+        <p class="quick-field-note">默认将数值 0 与缺失区分；所有自定义口径会完整写入“计算口径”表，点击“保存到全校平台”时一并保存。</p>
       </details>
       <div class="quick-generate-row"><span id="rules-feedback" class="quick-field-note">按所选范围统一生成所有报表。</span><button id="generate-button" type="button" class="btn primary"><span class="quick-button-symbol" aria-hidden="true">✦</span>生成分析表</button></div>
     </section>
@@ -77,8 +109,8 @@
     </section>
 
     <section id="before-results" class="quick-before-results"><span aria-hidden="true"><svg viewBox="0 0 32 32" fill="none"><path d="M6 5H26V27H6zM6 12H26M13 12V27M6 19H26" stroke="currentColor" stroke-width="1.5"/></svg></span><div><h2>一份原始表，生成一组可用的报表</h2><p>成绩排名 · ABC 等级 · 六等级 · 有效分 · 班级统计 · 前 N 名人数 · 薄弱学科</p></div></section>
-    <details id="rules-help" class="quick-help"><summary>计算口径与使用说明</summary><div class="quick-help-grid"><div><h3>本次出表怎么算</h3><p>同分同名次，后续名次跳号；按实际参与人数确定分界，边界同分全纳入。ABC 累计比例为 30%、80%、100%，六等级为 18%、30%、55%、80%、90%、100%。</p></div><div><h3>原始表能提供什么</h3><p>体育须在原始表中提供，历次进退与综合名次须有多次考试数据。姓名和学号都为空时，用原表行号定位学生，不据此建立跨次个人关联。</p></div><div><h3>数据保存在什么地方</h3><p>快速出表的成绩只在当前页面使用。点击“保存到全校平台”后才长期保存；刷新小软件前，请先下载需要的结果。数据始终在本机处理。</p></div></div></details>
-    <footer class="quick-footer"><span>融侨学迹 · 让每张表都有来处</span><a href="/">两个软件的入口</a></footer>
+    <details id="rules-help" class="quick-help"><summary>计算口径与使用说明</summary><div class="quick-help-grid"><div><h3>本次出表怎么算</h3><p>支持在“自定义计算口径”中自由设置有效分比例与取整方式、并列名次规则（跳号/不跳号）、前 N 名次节点、以及可增删档位的学生等级与分层等级比例；可导入/导出参数表或设为全校默认口径。</p></div><div><h3>原始表能提供什么</h3><p>体育须在原始表中提供，历次进退与综合名次须有多次考试数据。姓名和学号都为空时，用原表行号定位学生，不据此建立跨次个人关联。</p></div><div><h3>数据保存在什么地方</h3><p>快速出表的成绩只在当前页面使用。点击“保存到全校平台”后才长期保存；刷新小软件前，请先下载需要的结果。数据始终在本机处理。</p></div></div></details>
+    <footer class="quick-footer"><span>融侨学迹 · 让每张表都有来处</span><div class="quick-footer-links"><a href="/">两个软件的入口</a><button id="shutdown-button" class="quick-text-button" type="button" style="margin:0">关闭本机服务</button></div></footer>
   </main>
 </body>
 </html>

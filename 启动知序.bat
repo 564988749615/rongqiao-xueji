@@ -1,8 +1,2 @@
 @echo off
-cd /d "%~dp0"
-if exist .venv\Scripts\python.exe (
-  .venv\Scripts\python.exe server.py
-) else (
-  py -3 server.py
-)
-if errorlevel 1 pause
+call "%~dp0启动融侨学迹.bat" %*

@@ -1,3 +1,79 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>融侨学迹 · 学业质量档案</title><link rel="stylesheet" href="/common.css"><style>
-.home{max-width:1050px;margin:auto;padding:42px 36px 70px}.home header{display:flex;justify-content:space-between;align-items:center;margin-bottom:66px}.home h1{font-size:40px;letter-spacing:-1px;margin-bottom:17px}.intro{max-width:620px;font-size:17px;color:var(--muted);line-height:1.8;margin-bottom:37px}.choices{display:grid;grid-template-columns:1fr 1fr;gap:24px}.choice{display:flex;flex-direction:column;min-height:335px;padding:32px;background:#fff;border:1px solid var(--line);border-radius:17px}.choice.featured{background:#eee7f8;border-color:#dbceee}.choice .symbol{margin-bottom:22px;color:var(--primary-dark)}.choice .symbol svg{width:32px;height:32px}.choice h2{font-size:25px;margin-bottom:12px}.choice p{color:#665873;line-height:1.8}.choice .btn{align-self:flex-start;margin-top:auto}.footer{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;color:var(--muted);font-size:13px;margin-top:35px}.status{font-size:13px;color:var(--success)}@media(max-width:680px){.home{padding:24px}.home header{margin-bottom:42px}.home h1{font-size:32px}.choices{grid-template-columns:1fr}.choice{min-height:280px}}
-</style></head><body><main class="home enter"><header><a class="brand" href="/"><span class="logo-mark"><i></i><i></i><i></i></span><span>融侨学迹<small>学业质量档案</small></span></a><span class="status" id="status">正在连接本机服务…</span></header><h1>从一张成绩表，<br>到看得清的教学全貌。</h1><p class="intro">需要快速出表，或持续统筹全校教学，两种工作方式都从真实成绩开始。</p><div class="choices"><section class="choice"><div class="symbol" id="quick-icon"></div><h2>快速出表</h2><p>导入一次成绩，生成排名、等级、有效分、薄弱学科和班级统计。复制进 Excel，或直接打印。</p><a class="btn primary" href="/quick.html">进入快速出表 <span aria-hidden="true">→</span></a></section><section class="choice featured"><div class="symbol" id="leader-icon"></div><h2>考试档案</h2><p>保存每次考试，逐层查看年级、班级与学科。比较历次变化，记录教研跟进，一键进入汇报。</p><a class="btn primary" href="/leader.html">进入考试档案 <span aria-hidden="true">→</span></a></section></div><div class="footer"><span>数据与分析保存在这台电脑 · 两个入口共用同一套计算规则</span><a href="/help.html">使用说明与计算口径</a></div></main><script src="/common.js"></script><script>document.getElementById('quick-icon').innerHTML=Z.icons('file');document.getElementById('leader-icon').innerHTML=Z.icons('chart');Z.api('/api/health').then(()=>document.getElementById('status').textContent='本机服务已就绪').catch(e=>{document.getElementById('status').textContent=e.message;});</script></body></html>
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>融侨学迹 · 学业质量档案</title>
+  <link rel="stylesheet" href="/common.css">
+  <style>
+    .home{max-width:1050px;margin:auto;padding:42px 36px 70px}
+    .home header{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:66px}
+    .home h1{font-size:40px;letter-spacing:-1px;margin-bottom:17px}
+    .intro{max-width:620px;font-size:17px;color:var(--muted);line-height:1.8;margin-bottom:37px}
+    .choices{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+    .choice{display:flex;flex-direction:column;min-height:335px;padding:32px;background:#fff;border:1px solid var(--line);border-radius:17px}
+    .choice.featured{background:#eee7f8;border-color:#dbceee}
+    .choice .symbol{margin-bottom:22px;color:var(--primary-dark)}
+    .choice .symbol svg{width:32px;height:32px}
+    .choice h2{font-size:25px;margin-bottom:12px}
+    .choice p{color:#665873;line-height:1.8}
+    .choice .btn{align-self:flex-start;margin-top:auto}
+    .footer{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;color:var(--muted);font-size:13px;margin-top:35px}
+    .footer-links{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+    .status{font-size:13px;color:var(--success)}
+    .shutdown-link{border:0;background:none;padding:0;color:var(--muted);font-size:13px;text-decoration:underline;text-underline-offset:3px}
+    .shutdown-link:hover{color:var(--danger)}
+    @media(max-width:680px){
+      .home{padding:24px}
+      .home header{margin-bottom:42px}
+      .home h1{font-size:32px}
+      .choices{grid-template-columns:1fr}
+      .choice{min-height:280px}
+    }
+  </style>
+</head>
+<body>
+  <main class="home enter">
+    <header>
+      <a class="brand" href="/">
+        <span class="logo-mark"><i></i><i></i><i></i></span>
+        <span>融侨学迹<small>学业质量档案</small></span>
+      </a>
+      <span class="status" id="status">正在连接本机服务…</span>
+    </header>
+    <h1>从一张成绩表，<br>到看得清的教学全貌。</h1>
+    <p class="intro">需要快速出表，或持续统筹全校教学，两种工作方式都从真实成绩开始。</p>
+    <div class="choices">
+      <section class="choice">
+        <div class="symbol" id="quick-icon"></div>
+        <h2>快速出表</h2>
+        <p>导入一次成绩，生成排名、等级、有效分、薄弱学科和班级统计。复制进 Excel，或直接打印。</p>
+        <a class="btn primary" href="/quick.html">进入快速出表 <span aria-hidden="true">→</span></a>
+      </section>
+      <section class="choice featured">
+        <div class="symbol" id="leader-icon"></div>
+        <h2>考试档案</h2>
+        <p>保存每次考试，逐层查看年级、班级与学科。比较历次变化，记录教研跟进，一键进入汇报。</p>
+        <a class="btn primary" href="/leader.html">进入考试档案 <span aria-hidden="true">→</span></a>
+      </section>
+    </div>
+    <div class="footer">
+      <span>数据与分析保存在这台电脑 · 两个入口共用同一套计算规则</span>
+      <div class="footer-links">
+        <a href="/help.html">使用说明与计算口径</a>
+        <button id="shutdown-button" class="shutdown-link" type="button">关闭本机服务</button>
+      </div>
+    </div>
+  </main>
+  <script src="/common.js"></script>
+  <script>
+    document.getElementById('quick-icon').innerHTML = Z.icons('file');
+    document.getElementById('leader-icon').innerHTML = Z.icons('chart');
+    const statusEl = document.getElementById('status');
+    Z.api('/api/health')
+      .then(() => { statusEl.textContent = '本机服务已就绪'; })
+      .catch(err => { statusEl.textContent = err.message; });
+    Z.bindShutdown(document.getElementById('shutdown-button'), statusEl);
+  </script>
+</body>
+</html>

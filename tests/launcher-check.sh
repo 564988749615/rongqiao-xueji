@@ -9,9 +9,13 @@ LAUNCHER="$APP/Contents/MacOS/融侨学迹"
 grep -q '<string>融侨学迹</string>' "$APP/Contents/Info.plist"
 grep -q 'PROJECT_ROOT=' "$LAUNCHER"
 grep -q 'server.py' "$LAUNCHER"
+grep -q 'osascript' "$LAUNCHER"
 grep -q '127.0.0.1' "$ROOT/server.py"
+[[ -f "$ROOT/启动融侨学迹.bat" ]]
+[[ -f "$ROOT/首次安装_Windows.bat" ]]
 zsh -n "$LAUNCHER"
 zsh -n "$ROOT/启动融侨学迹.command"
+zsh -n "$ROOT/首次安装.command"
 
 PORT=8898
 DATA_DIR="/tmp/rongqiao-launcher-check-$$"

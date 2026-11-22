@@ -71,6 +71,25 @@ class ImportTests(unittest.TestCase):
     def test_classes(self):
         self.assertEqual(normalize_class("初三（1）班"), "01")
         self.assertEqual(normalize_class(2), "02")
+        self.assertEqual(normalize_class("高一(3)班"), "03")
+        self.assertEqual(normalize_class("高二12班"), "12")
+        self.assertEqual(normalize_class("初2027届（5）班"), "05")
+        self.assertEqual(normalize_class("七（4）班"), "04")
+        self.assertEqual(normalize_class("九年级一班"), "01")
+        self.assertEqual(normalize_class("高三十一班"), "11")
+        self.assertEqual(normalize_class("实验班"), "实验班")
+
+    def test_summary_in_name_exam_id_and_unrecognized_columns(self):
+        content = "班级,考号,姓名,语文,数学,日语\n高一(1)班,K001,测试甲,100,110,95\n,,年级平均,100,110,95\n".encode("utf-8")
+        d = parse_workbook(content, "高一测试.csv")
+        self.assertEqual(len(d["rows"]), 1)
+        self.assertEqual(d["classes"], ["01"])
+        self.assertEqual(d["mapping"]["exam_id"], 2)
+        self.assertEqual(d["mapping"]["unrecognized"], ["日语"])
+        messages = [w["message"] for w in d["warnings"]]
+        self.assertTrue(any("汇总行" in m for m in messages))
+        self.assertTrue(any("考号列" in m for m in messages))
+        self.assertTrue(any("日语" in m for m in messages))
 
 
 class CalculationTests(unittest.TestCase):
@@ -139,6 +158,72 @@ class CalculationTests(unittest.TestCase):
         a = analyze(dataset([("01", [.1, .2]), ("01", [.3, 0]), ("01", [.10001, .2])]))
         self.assertEqual(a["students"][0]["total"], .30001)
         self.assertEqual([s["rank"] for s in a["students"]], [1, 2, 2])
+
+    def test_custom_rules_tie_mode_grade_bounds_top_nodes_and_order(self):
+        self.assertEqual(ranks([100, 98, 98, 96], "dense"), {100: 1, 98: 2, 96: 3})
+        rows = [("01", [100 - i * 5, 90 - i * 4]) for i in range(10)]
+        rows[2] = ("01", [95, 86])  # tie with index 1
+        d = dataset(rows, ("语文", "数学"))
+        rules = {
+            "tie_mode": "dense",
+            "subject_order": ["数学", "语文"],
+            "top_nodes": [2, 5, 8],
+            "abc_bounds": [["A", 0.3], ["B", 0.7], ["C", 1.0]],
+            "level_bounds": [["A1", 0.2], ["A2", 0.4], ["B1", 0.6], ["B2", 0.8], ["C1", 0.9], ["C2", 1.0]],
+            "high_ratio": 0.2,
+            "main_ratio": 0.4,
+            "borderline_band": 15,
+            "shift_threshold": 30,
+            "warn_gap_pct": 6,
+            "weak_rank_index": 2,
+            "weak_cutoffs": [100, 300, 500],
+            "mentor_range": [2, 6],
+            "score_bin_step": 25,
+        }
+        a = analyze(d, rules)
+        self.assertEqual(a["subjects"], ["数学", "语文"])
+        self.assertEqual(a["rules"]["tie_mode"], "dense")
+        self.assertEqual(a["rules"]["top_nodes"], [2, 5, 8])
+        self.assertEqual(a["rules"]["mentor_range"], [2, 6])
+        self.assertEqual(a["rules"]["weak_rank_index"], 2)
+        self.assertEqual(a["rules"]["weak_cutoffs"], [100, 300, 500])
+        # Dense ranking: 1, 2, 2, 3 (not 1, 2, 2, 4)
+        self.assertEqual([s["rank"] for s in a["students"][:4]], [1, 2, 2, 3])
+        # Custom grade bounds: math scores sorted = [90, 86, 86, 78, 74, 70, 66, 62, 58, 54]
+        # A=30% (3rd) => 86, B=70% (7th) => 66; A1=20% (2nd) => 86, A2=40% (4th) => 78
+        math_abc = {g["grade"]: g["score"] for g in a["grade_boundaries"]["数学"]}
+        self.assertEqual(math_abc["A"], 86)
+        self.assertEqual(math_abc["B"], 66)
+        math_lvl = {g["grade"]: g["score"] for g in a["level_boundaries"]["数学"]}
+        self.assertEqual(math_lvl["A1"], 86)
+        self.assertEqual(math_lvl["A2"], 78)
+        self.assertEqual(set(a["class_stats"][0]["top"].keys()), {"2", "5", "8"})
+        self.assertEqual(len(a["tables"]), 10)
+        self.assertTrue(len(a["score_bins"]) >= 1)
+        self.assertEqual(sum(b["count"] for b in a["score_bins"]), 10)
+
+    def test_cutoff_rounding_four_tier_abcd_and_disabled_mentor(self):
+        # 5 students with 30% => exact 1.5 -> floor=1, round=2, ceil=2
+        rows = [("01", [100 - i * 10, 100 - i * 10]) for i in range(5)]
+        d = dataset(rows, ("语文", "数学"))
+        a_floor = analyze(d, {"cutoff_ratio": 0.3, "cutoff_rounding": "floor", "mentor_range": None})
+        a_round = analyze(d, {"cutoff_ratio": 0.3, "cutoff_rounding": "round"})
+        a_ceil = analyze(d, {"cutoff_ratio": 0.3, "cutoff_rounding": "ceil", "abc_bounds": [["A", 0.25], ["B", 0.55], ["C", 0.85], ["D", 1.0]]})
+        self.assertEqual(a_floor["summary"]["cutoff_rank"], 1)
+        self.assertEqual(a_round["summary"]["cutoff_rank"], 2)
+        self.assertEqual(a_ceil["summary"]["cutoff_rank"], 2)
+        self.assertIsNone(a_floor["rules"]["mentor_range"])
+        self.assertEqual([g["grade"] for g in a_ceil["grade_boundaries"]["总分"]], ["A", "B", "C", "D"])
+
+    def test_include_tables_false_skips_tables_without_changing_stats(self):
+        d = dataset([("01", [95, 85]), ("02", [75, 90])])
+        full = analyze(d)
+        lite = analyze(d, include_tables=False)
+        self.assertEqual(lite["tables"], [])
+        self.assertEqual(lite["summary"], full["summary"])
+        self.assertEqual(lite["subject_stats"], full["subject_stats"])
+        self.assertEqual(lite["class_stats"], full["class_stats"])
+        self.assertEqual(lite["students"], full["students"])
 
     def test_invalid_rules_rejected(self):
         d = dataset([("01", [50, 60])])

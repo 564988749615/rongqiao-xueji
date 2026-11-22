@@ -2,18 +2,63 @@
 set -u
 SCRIPT_DIR="${0:A:h}"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
-cd "$PROJECT_ROOT" || exit 1
 
-runtime_python="${HOME}/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3"
-if [[ -x ".venv/bin/python" ]]; then
-  runtime_python="$PWD/.venv/bin/python"
-elif [[ ! -x "$runtime_python" ]]; then
-  runtime_python="$(command -v python3 2>/dev/null || true)"
-fi
+is_gui_launch() {
+  [[ -z "${NO_GUI_DIALOG:-}" && ! -t 1 && "${*:-}" != *"--no-open"* ]]
+}
 
-if [[ -z "$runtime_python" ]] || ! "$runtime_python" -c 'import sys; assert sys.version_info >= (3,10); import openpyxl' 2>/dev/null; then
-  print '融侨学迹需要 Python 3.10 或更新版本，以及 openpyxl。请先运行「首次安装.command」。' >&2
+alert_error() {
+  local message="$1"
+  shift
+  print -r -- "$message" >&2
+  if is_gui_launch "$@"; then
+    /usr/bin/osascript -e "display dialog \"${message//\"/\\\"}\" buttons {\"确定\"} default button 1 with icon stop with title \"融侨学迹\"" >/dev/null 2>&1 || true
+  fi
+}
+
+if [[ ! -f "$PROJECT_ROOT/server.py" ]]; then
+  alert_error "未找到融侨学迹程序文件。请将「融侨学迹.app」保留在原软件目录的「打包」文件夹中启动，如需桌面快捷方式请右键创建替身。" "$@"
   exit 1
 fi
 
-"$runtime_python" "$PROJECT_ROOT/server.py" "$@"
+cd "$PROJECT_ROOT" || exit 1
+
+find_python() {
+  local candidate
+  for candidate in \
+    "${RONGQIAO_PYTHON:-}" \
+    "$PROJECT_ROOT/.venv/bin/python" \
+    "/opt/homebrew/bin/python3" \
+    "/usr/local/bin/python3" \
+    "$(command -v python3 2>/dev/null || true)" \
+    "${HOME}/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3"; do
+    if [[ -n "$candidate" && -x "$candidate" ]]; then
+      if "$candidate" -c 'import sys; assert sys.version_info >= (3,9); import openpyxl' 2>/dev/null; then
+        print -r -- "$candidate"
+        return 0
+      fi
+    fi
+  done
+  return 1
+}
+
+runtime_python="$(find_python || true)"
+if [[ -z "$runtime_python" ]]; then
+  alert_error "首次使用融侨学迹需要 Python 3.9 或更新版本，以及 openpyxl。请先双击软件目录中的「首次安装.command」。" "$@"
+  exit 1
+fi
+
+if is_gui_launch "$@"; then
+  err_file="$(mktemp /tmp/rongqiao-start.XXXXXX)"
+  "$runtime_python" "$PROJECT_ROOT/server.py" "$@" 2>"$err_file"
+  status=$?
+  if [[ $status -ne 0 ]]; then
+    err_msg="$(<"$err_file")"
+    rm -f "$err_file"
+    alert_error "${err_msg:-融侨学迹启动未完成，请检查端口 8877 是否被其他程序占用。}" "$@"
+    exit $status
+  fi
+  rm -f "$err_file"
+else
+  exec "$runtime_python" "$PROJECT_ROOT/server.py" "$@"
+fi

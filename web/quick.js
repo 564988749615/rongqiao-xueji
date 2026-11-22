@@ -1,8 +1,10 @@
-/* 知序快速出表：一次导入，一组真实分析结果。成绩仅在本页内存中暂存。 */
+/* 融侨学迹快速出表：一次导入，一组真实分析结果。成绩仅在本页内存中暂存。 */
 (() => {
   'use strict';
   const $ = (id) => document.getElementById(id);
-  const state = { dataset: null, analysis: null, busy: false, saving: false, exporting: false, scope: 'all', tab: 'scores', page: 1, pageSize: 30, search: '', tableClass: '', dirty: false, importSerial: 0, analyzeSerial: 0, savedId: null };
+  const now = new Date();
+  const todayText = [now.getFullYear(), String(now.getMonth() + 1).padStart(2, '0'), String(now.getDate()).padStart(2, '0')].join('-');
+  const state = { dataset: null, analysis: null, lastFile: null, busy: false, saving: false, exporting: false, scope: 'all', tab: 'scores', page: 1, pageSize: 30, search: '', tableClass: '', dirty: false, importSerial: 0, analyzeSerial: 0, savedId: null };
   const SETTINGS_KEY = 'zhixu.quick.settings.v1';
   const tabLabels = { scores: '成绩排名', abc: 'ABC 等级', levels: '六等级', effective: '有效分', class_stats: '班级统计', segments: '前 N 名人数', weak: '薄弱学科', quality: '数据核验', rules: '计算口径' };
   const exportIds = ['workbook-button', 'print-all-button', 'copy-button', 'csv-button', 'print-button', 'save-button'];
@@ -23,6 +25,7 @@
     document.body.classList.toggle('quick-busy', value);
     $('file-input').disabled = value;
     $('example-button').disabled = value;
+    $('retry-upload-button').disabled = value;
     $('generate-button').disabled = value;
     $('regenerate-button').disabled = value;
     $('import-status').textContent = value ? label : (state.dataset ? '读取完成 · 原始文件未修改' : '支持 .xlsx、.xlsm、.csv');
@@ -35,19 +38,111 @@
     $('stale-notice').hidden = !state.analysis || !state.dirty;
     $('results-section').setAttribute('aria-busy', String(state.busy));
   }
+  const DEFAULT_ABC = [{ label: 'A', pct: 0.30 }, { label: 'B', pct: 0.80 }, { label: 'C', pct: 1.00 }];
+  const DEFAULT_LVL = [
+    { label: 'A1', pct: 0.18 }, { label: 'A2', pct: 0.30 },
+    { label: 'B1', pct: 0.55 }, { label: 'B2', pct: 0.80 },
+    { label: 'C1', pct: 0.90 }, { label: 'C2', pct: 1.00 },
+  ];
+  const DEFAULT_TOP_NODES = '50,100,150,200,250,300,350,400,450,500,600,700,800';
+  const pctNum = v => { const x = Number(v); if (!Number.isFinite(x)) return ''; return Number((x <= 1 ? x * 100 : x).toFixed(2)); };
+
+  function renderQuickGrades(prefix, items) {
+    const body = $(`quick-${prefix}-body`);
+    if (!body) return;
+    const canRemove = items.length > 2;
+    body.innerHTML = items.map((item, i) => `<tr>
+      <td><input type="text" data-q-${prefix}-label="${i}" value="${html(item.label)}" maxlength="8" aria-label="等级名称"></td>
+      <td><input type="number" data-q-${prefix}-pct="${i}" value="${pctNum(item.pct)}" min="0.5" max="100" step="0.5" aria-label="累计比例上限"></td>
+      <td style="width:32px;text-align:center"><button type="button" class="quick-grade-del" data-quick-grade-del="${prefix}" data-index="${i}" title="删除该档" aria-label="删除该档"${canRemove ? '' : ' disabled'}>×</button></td>
+    </tr>`).join('');
+  }
+  function readQuickRawGrades(prefix) {
+    const body = $(`quick-${prefix}-body`);
+    if (!body) return [];
+    const labels = [...body.querySelectorAll(`[data-q-${prefix}-label]`)];
+    return labels.map((el, i) => ({
+      label: el.value.trim(),
+      pct: Number(body.querySelector(`[data-q-${prefix}-pct="${i}"]`)?.value),
+    }));
+  }
+  function parseQuickGrades(prefix, title) {
+    const rows = readQuickRawGrades(prefix);
+    if (rows.length < 2) throw new Error(`${title}至少需要 2 个档位。`);
+    let prev = 0;
+    const out = [];
+    for (const row of rows) {
+      if (!row.label) throw new Error(`${title}名称不能为空。`);
+      if (!Number.isFinite(row.pct) || row.pct <= prev || row.pct > 100) {
+        throw new Error(`${title}「${row.label}」的累计比例应大于上一档且不超过 100%。`);
+      }
+      out.push({ label: row.label, pct: Number((row.pct / 100).toFixed(4)) });
+      prev = row.pct;
+    }
+    if (Math.abs(out[out.length - 1].pct - 1) > 0.001) {
+      throw new Error(`${title}最后一档的累计比例应为 100%。`);
+    }
+    return out;
+  }
+  function applyQuickRulesToUI(r) {
+    if (!r || typeof r !== 'object') return;
+    if (r.cutoff_ratio != null) $('cutoff-ratio').value = pctNum(r.cutoff_ratio);
+    if (['floor', 'round', 'ceil'].includes(r.cutoff_rounding)) $('cutoff-rounding').value = r.cutoff_rounding;
+    if (['competition', 'dense'].includes(r.tie_mode)) $('tie-mode').value = r.tie_mode;
+    if (['exclude', 'include'].includes(r.zero_policy)) $('zero-policy').value = r.zero_policy;
+    if (['exclude_total', 'zero'].includes(r.missing_policy)) $('missing-policy').value = r.missing_policy;
+    if (r.weak_count >= 1 && r.weak_count <= 7) $('weak-count').value = String(r.weak_count);
+    if (r.score_bin_step >= 1 && r.score_bin_step <= 500) $('score-bin-step').value = String(r.score_bin_step);
+    if (Array.isArray(r.top_nodes) && r.top_nodes.length) $('top-nodes').value = r.top_nodes.join(',');
+    else if (typeof r.top_nodes === 'string' && r.top_nodes.trim()) $('top-nodes').value = r.top_nodes;
+    if (Array.isArray(r.abc_bounds) && r.abc_bounds.length >= 2) renderQuickGrades('abc', r.abc_bounds);
+    if (Array.isArray(r.level_bounds) && r.level_bounds.length >= 2) renderQuickGrades('lvl', r.level_bounds);
+    if (r.full_marks && typeof r.full_marks === 'object') {
+      $('full-mark-options')?.querySelectorAll('input').forEach(input => {
+        const val = r.full_marks[input.dataset.subject];
+        if (val != null && val !== '') input.value = val;
+      });
+    }
+  }
   function rememberSettings() {
     try {
-      localStorage.setItem(SETTINGS_KEY, JSON.stringify({ cutoff: $('cutoff-ratio').value, zero: $('zero-policy').value, missing: $('missing-policy').value, weak: $('weak-count').value }));
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify({
+        cutoff: $('cutoff-ratio').value,
+        rounding: $('cutoff-rounding').value,
+        tie: $('tie-mode').value,
+        zero: $('zero-policy').value,
+        missing: $('missing-policy').value,
+        weak: $('weak-count').value,
+        binStep: $('score-bin-step').value,
+        topNodes: $('top-nodes').value,
+        abc: readQuickRawGrades('abc'),
+        lvl: readQuickRawGrades('lvl'),
+      }));
     } catch (_) { /* 页面仍可使用；这里不保存成绩。 */ }
   }
   function restoreSettings() {
+    renderQuickGrades('abc', DEFAULT_ABC);
+    renderQuickGrades('lvl', DEFAULT_LVL);
     try {
       const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
       if (Number(s.cutoff) > 0 && Number(s.cutoff) <= 100) $('cutoff-ratio').value = s.cutoff;
+      if (['floor', 'round', 'ceil'].includes(s.rounding)) $('cutoff-rounding').value = s.rounding;
+      if (['competition', 'dense'].includes(s.tie)) $('tie-mode').value = s.tie;
       if (['exclude', 'include'].includes(s.zero)) $('zero-policy').value = s.zero;
       if (['exclude_total', 'zero'].includes(s.missing)) $('missing-policy').value = s.missing;
       if (Number(s.weak) >= 1 && Number(s.weak) <= 7) $('weak-count').value = s.weak;
+      if (Number(s.binStep) >= 1 && Number(s.binStep) <= 500) $('score-bin-step').value = s.binStep;
+      if (typeof s.topNodes === 'string' && s.topNodes.trim()) $('top-nodes').value = s.topNodes;
+      if (Array.isArray(s.abc) && s.abc.length >= 2) renderQuickGrades('abc', s.abc);
+      if (Array.isArray(s.lvl) && s.lvl.length >= 2) renderQuickGrades('lvl', s.lvl);
     } catch (_) { /* 无有效设置时使用已显示的默认值。 */ }
+  }
+  async function loadServerDefaultRules() {
+    if (localStorage.getItem(SETTINGS_KEY)) return;
+    try {
+      const res = await Z.api('/api/default-rules');
+      if (res?.has_custom && res.rules) applyQuickRulesToUI(res.rules);
+    } catch (_) { /* 离线或无自定义默认时静默保持内置默认 */ }
   }
   function changed() {
     state.dirty = !!state.analysis;
@@ -84,9 +179,17 @@
     const totalSubjects = [...$('subject-options').querySelectorAll('input:checked')].map(input => input.value);
     const percent = Number($('cutoff-ratio').value);
     const weakCount = Number($('weak-count').value);
+    const binStep = Number($('score-bin-step').value);
     if (!classes.length) throw new Error('请至少选择一个班级。');
     if (!totalSubjects.length) throw new Error('请至少选择一个计入总分的科目。');
-    if (!Number.isFinite(percent) || percent < 1 || percent > 100) throw new Error('有效分比例应在 1%—100% 之间。');
+    if (!Number.isFinite(percent) || percent <= 0 || percent > 100) throw new Error('有效分比例应在 0.1%—100% 之间。');
+    if (!Number.isFinite(binStep) || binStep < 1 || binStep > 500) throw new Error('分数段间隔应在 1—500 分之间。');
+    const topNodes = String($('top-nodes').value || '').replace(/，/g, ',').split(',').map(x => x.trim()).filter(Boolean).map(Number);
+    if (!topNodes.length || topNodes.some(v => !Number.isInteger(v) || v <= 0)) {
+      throw new Error('前 N 名次节点应为逗号分隔的正整数，例如 50,100,200,400,600,800。');
+    }
+    const abcBounds = parseQuickGrades('abc', '学生等级');
+    const levelBounds = parseQuickGrades('lvl', '分层等级');
     const fullMarks = {};
     $('full-mark-options').querySelectorAll('input').forEach(input => {
       if (input.value.trim() === '') return;
@@ -94,7 +197,21 @@
       if (!Number.isFinite(value) || value <= 0) throw new Error(`${input.dataset.subject}的满分应大于 0，未确认可留空。`);
       fullMarks[input.dataset.subject] = value;
     });
-    return { classes: state.scope === 'all' ? null : classes, total_subjects: totalSubjects, cutoff_ratio: percent / 100, zero_policy: $('zero-policy').value, missing_policy: $('missing-policy').value, weak_count: weakCount, full_marks: fullMarks };
+    return {
+      classes: state.scope === 'all' ? null : classes,
+      total_subjects: totalSubjects,
+      cutoff_ratio: percent / 100,
+      cutoff_rounding: $('cutoff-rounding').value || 'floor',
+      tie_mode: $('tie-mode').value || 'competition',
+      zero_policy: $('zero-policy').value,
+      missing_policy: $('missing-policy').value,
+      weak_count: weakCount,
+      score_bin_step: binStep,
+      top_nodes: [...new Set(topNodes)].sort((a, b) => a - b),
+      abc_bounds: abcBounds,
+      level_bounds: levelBounds,
+      full_marks: fullMarks,
+    };
   }
   function warningHTML(warnings, limit = 12) {
     const messages = warnings.slice(0, limit).map(w => `<li>${html(w.message || w)}</li>`).join('');
@@ -128,6 +245,7 @@
     $('class-options').innerHTML = dataset.classes.map(cls => `<label><input type="checkbox" value="${html(cls)}" checked><span>${html(cls)} 班</span></label>`).join('');
     $('subject-options').innerHTML = dataset.subjects.map(subject => `<label><input type="checkbox" value="${html(subject)}" checked><span>${html(subject)}</span></label>`).join('');
     $('full-mark-options').innerHTML = dataset.subjects.map(subject => `<label class="field"><span>${html(subject)}</span><input type="number" data-subject="${html(subject)}" min="0.1" step="0.5" inputmode="decimal" placeholder="未确认" aria-label="${html(subject)}满分（选填）"></label>`).join('');
+    renderFullMarkPresets();
     $('rules-section').hidden = false;
     $('results-section').hidden = true;
     $('before-results').hidden = false;
@@ -135,6 +253,44 @@
     setScope('all');
     updateActions();
     $('rules-section').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+  function renderFullMarkPresets() {
+    const saved = Z.getFullMarkTemplate();
+    $('full-mark-presets').innerHTML = [
+      ...Z.fullMarkPresets.map(p => `<button type="button" data-mark-preset="${html(p.id)}">${html(p.label)}</button>`),
+      saved ? '<button type="button" data-mark-preset="saved">套用已存模板</button>' : '',
+      '<button type="button" data-mark-preset="save">存为常用模板</button>',
+      '<button type="button" data-mark-preset="clear">清空</button>'
+    ].join('');
+  }
+  function applyFullMarkPreset(action) {
+    const inputs = [...$('full-mark-options').querySelectorAll('input')];
+    if (!inputs.length) return;
+    if (action === 'clear') {
+      inputs.forEach(input => { input.value = ''; });
+      changed();
+      Z.notice('已清空各科满分设置。');
+      return;
+    }
+    if (action === 'save') {
+      const current = {};
+      inputs.forEach(input => { if (input.value.trim() !== '') current[input.dataset.subject] = Number(input.value); });
+      try {
+        const saved = Z.setFullMarkTemplate(current);
+        renderFullMarkPresets();
+        Z.notice(`已保存 ${Object.keys(saved).length} 科常用满分模板到本机。`);
+      } catch (error) { showError(error); }
+      return;
+    }
+    const preset = action === 'saved' ? { marks: Z.getFullMarkTemplate() } : Z.fullMarkPresets.find(p => p.id === action);
+    if (!preset) return;
+    let filled = 0;
+    inputs.forEach(input => {
+      const val = preset.all ?? preset.marks?.[input.dataset.subject];
+      if (val != null) { input.value = val; filled += 1; }
+    });
+    changed();
+    Z.notice(filled ? `已按模板填入 ${filled} 科满分，请核对后生成。` : '当前表中没有与模板匹配的学科。');
   }
   function base64(file) {
     return new Promise((resolve, reject) => {
@@ -149,6 +305,7 @@
     clearError();
     if (!/\.(xlsx|xlsm|csv)$/i.test(file.name)) { showError('请选择 .xlsx、.xlsm 或 .csv 成绩表；旧版 .xls 请先在 Excel 中另存为 .xlsx。'); return; }
     if (file.size > 20 * 1024 * 1024) { showError('文件超过 20 MB，请删除无关工作表或另存为精简的成绩表后再导入。'); return; }
+    state.lastFile = file;
     const serial = ++state.importSerial;
     setBusy(true);
     try {
@@ -157,15 +314,31 @@
       const password = $('file-password').value;
       const dataset = password ? await Z.api('/api/import', { filename: file.name, content: await base64(file), metadata: meta, password }) : await Z.upload(file, meta);
       if (serial !== state.importSerial) return;
+      state.lastFile = null;
+      $('retry-upload-button').hidden = true;
       acceptDataset(dataset);
       $('file-password').value = '';
       Z.notice(`已读取 ${dataset.rows.length} 条成绩，请确认范围后生成分析表。`);
-    } catch (error) { if (serial === state.importSerial) showError(error); }
+    } catch (error) {
+      if (serial === state.importSerial) {
+        showError(error);
+        $('upload-title').textContent = file.name;
+        $('upload-description').textContent = '读取未完成，已保留当前文件；核对密码或表格后可重新读取，或另选文件。';
+        $('retry-upload-button').hidden = false;
+        if (/密码/.test(String(error?.message || ''))) {
+          const details = $('file-password').closest('details');
+          if (details) details.open = true;
+          $('file-password').focus();
+        }
+      }
+    }
     finally { if (serial === state.importSerial) setBusy(false); $('file-input').value = ''; }
   }
   async function loadExample() {
     if (state.busy) return;
     clearError();
+    state.lastFile = null;
+    $('retry-upload-button').hidden = true;
     const serial = ++state.importSerial;
     setBusy(true, '正在读取已提供的原始表…');
     try {
@@ -347,6 +520,8 @@
   function bind() {
     $('file-input').addEventListener('change', event => upload(event.target.files?.[0]));
     $('example-button').addEventListener('click', loadExample);
+    $('retry-upload-button').addEventListener('click', () => { if (state.lastFile) upload(state.lastFile); });
+    $('file-password').addEventListener('keydown', event => { if (event.key === 'Enter' && state.lastFile) { event.preventDefault(); upload(state.lastFile); } });
     const zone = $('drop-zone');
     ['dragenter', 'dragover'].forEach(type => zone.addEventListener(type, event => { event.preventDefault(); if (!state.busy) zone.classList.add('drag-over'); }));
     ['dragleave', 'drop'].forEach(type => zone.addEventListener(type, event => { event.preventDefault(); zone.classList.remove('drag-over'); }));
@@ -355,7 +530,93 @@
     $('class-options').addEventListener('change', () => { updateScopeCaption(); changed(); });
     $('subject-options').addEventListener('change', changed);
     $('full-mark-options').addEventListener('input', changed);
-    ['cutoff-ratio', 'zero-policy', 'missing-policy', 'weak-count', 'exam-name', 'exam-grade', 'exam-date'].forEach(id => $(id).addEventListener('input', changed));
+    $('full-mark-presets').addEventListener('click', event => { const btn = event.target.closest('[data-mark-preset]'); if (btn) applyFullMarkPreset(btn.dataset.markPreset); });
+    ['cutoff-ratio', 'cutoff-rounding', 'tie-mode', 'zero-policy', 'missing-policy', 'weak-count', 'score-bin-step', 'top-nodes', 'exam-name', 'exam-grade', 'exam-date'].forEach(id => $(id).addEventListener('input', changed));
+    ['cutoff-rounding', 'tie-mode', 'zero-policy', 'missing-policy', 'weak-count'].forEach(id => $(id).addEventListener('change', changed));
+    $('quick-grade-presets').addEventListener('click', event => {
+      const btn = event.target.closest('[data-quick-grade-preset]');
+      if (!btn) return;
+      const key = btn.dataset.quickGradePreset;
+      if (key === 'abcd4') {
+        renderQuickGrades('abc', [{ label: 'A', pct: 0.25 }, { label: 'B', pct: 0.55 }, { label: 'C', pct: 0.85 }, { label: 'D', pct: 1.00 }]);
+      } else if (key === '2040') {
+        renderQuickGrades('abc', [{ label: 'A', pct: 0.40 }, { label: 'B', pct: 0.80 }, { label: 'C', pct: 1.00 }]);
+        renderQuickGrades('lvl', [{ label: 'A1', pct: 0.20 }, { label: 'A2', pct: 0.40 }, { label: 'B1', pct: 0.60 }, { label: 'B2', pct: 0.80 }, { label: 'C1', pct: 0.90 }, { label: 'C2', pct: 1.00 }]);
+      } else {
+        renderQuickGrades('abc', DEFAULT_ABC);
+        renderQuickGrades('lvl', DEFAULT_LVL);
+      }
+      changed();
+      Z.notice('已套用等级比例预设，点击“生成分析表”生效。');
+    });
+    $('advanced-rules').addEventListener('click', event => {
+      const addBtn = event.target.closest('[data-quick-grade-add]');
+      if (addBtn) {
+        const prefix = addBtn.dataset.quickGradeAdd;
+        const rows = readQuickRawGrades(prefix);
+        if (rows.length >= 12) { Z.notice('最多支持 12 个等级档位。', true); return; }
+        const lastIdx = rows.length - 1;
+        const prevPct = lastIdx > 0 ? (rows[lastIdx - 1].pct || 0) : 0;
+        const midPct = Math.min(99, Math.max(prevPct + 1, Math.round((prevPct + 100) / 2)));
+        const nextLabel = prefix === 'abc' ? String.fromCharCode(65 + Math.min(25, rows.length)) : `L${rows.length + 1}`;
+        rows.splice(lastIdx, 0, { label: nextLabel, pct: midPct });
+        rows[rows.length - 1].pct = 100;
+        renderQuickGrades(prefix, rows.map(x => ({ label: x.label, pct: x.pct / 100 })));
+        changed();
+        return;
+      }
+      const delBtn = event.target.closest('[data-quick-grade-del]');
+      if (delBtn && !delBtn.disabled) {
+        const prefix = delBtn.dataset.quickGradeDel;
+        const idx = Number(delBtn.dataset.index);
+        const rows = readQuickRawGrades(prefix);
+        if (rows.length <= 2) return;
+        rows.splice(idx, 1);
+        rows[rows.length - 1].pct = 100;
+        renderQuickGrades(prefix, rows.map(x => ({ label: x.label, pct: x.pct / 100 })));
+        changed();
+      }
+    });
+    ['quick-abc-body', 'quick-lvl-body'].forEach(id => $(id).addEventListener('input', changed));
+    $('quick-rules-export-btn').addEventListener('click', () => {
+      try {
+        const rules = readRules();
+        const payload = { format: 'rongqiao-rules', version: 1, exported_at: new Date().toISOString(), rules };
+        Z.downloadBlob(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' }), '融侨学迹_口径参数表.json');
+        Z.notice('已导出当前口径参数表，可在考试档案或下次出表中一键导入。');
+      } catch (err) { showError(err); }
+    });
+    $('quick-rules-import-btn').addEventListener('click', () => $('quick-rules-import-file').click());
+    $('quick-rules-import-file').addEventListener('change', async () => {
+      const file = $('quick-rules-import-file').files?.[0];
+      if (!file) return;
+      try {
+        const parsed = JSON.parse(await file.text());
+        const imported = parsed?.rules && typeof parsed.rules === 'object' ? parsed.rules : parsed;
+        applyQuickRulesToUI(imported);
+        changed();
+        Z.notice('已导入参数表，核对后点击“生成分析表”即可生效。');
+      } catch (err) { showError(err.message || '参数表不是有效的 JSON 文件。'); }
+      finally { $('quick-rules-import-file').value = ''; }
+    });
+    $('quick-rules-default-btn').addEventListener('click', async () => {
+      try {
+        const rules = readRules();
+        await Z.api('/api/default-rules', { rules });
+        Z.notice('已保存为全校默认口径，后续新建考试与快速出表将自动沿用。');
+      } catch (err) { showError(err); }
+    });
+    $('quick-rules-reset-btn').addEventListener('click', () => {
+      applyQuickRulesToUI({
+        cutoff_ratio: 0.30, cutoff_rounding: 'floor', tie_mode: 'competition',
+        zero_policy: 'exclude', missing_policy: 'exclude_total', weak_count: 4,
+        score_bin_step: 50, top_nodes: DEFAULT_TOP_NODES,
+        abc_bounds: DEFAULT_ABC, level_bounds: DEFAULT_LVL,
+      });
+      $('full-mark-options').querySelectorAll('input').forEach(i => { i.value = ''; });
+      changed();
+      Z.notice('已恢复系统默认计算口径。');
+    });
     $('generate-button').addEventListener('click', generate);
     $('regenerate-button').addEventListener('click', generate);
     $('table-tabs').addEventListener('click', event => { const b = event.target.closest('[data-table]'); if (b) switchTable(b.dataset.table); });
@@ -378,11 +639,14 @@
     $('print-all-button').addEventListener('click', () => { if (!ensureFresh()) return; try { Z.printTables(state.analysis.tables, state.analysis.metadata.name, reportSubtitle()); } catch (error) { showError(error); } });
     $('workbook-button').addEventListener('click', exportWorkbook);
     $('save-button').addEventListener('click', save);
+    Z.bindShutdown($('shutdown-button'));
     window.addEventListener('beforeunload', event => {
       if (state.saving || state.busy || state.exporting) { event.preventDefault(); event.returnValue = ''; }
     });
   }
+  if (!$('exam-date').value) $('exam-date').value = todayText;
   restoreSettings();
+  loadServerDefaultRules();
   bind();
   if (new URLSearchParams(location.search).get('load') === 'original') loadExample();
 })();
