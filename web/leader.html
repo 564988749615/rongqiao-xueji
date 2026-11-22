@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#8061b5">
+  <title>融侨学迹 · 学业质量档案</title>
+  <link rel="stylesheet" href="/common.css">
+  <link rel="stylesheet" href="/leader.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到主要内容</a>
+  <aside class="leader-sidebar">
+    <a href="/" class="leader-brand" aria-label="返回融侨学迹首页"><span class="brand-mark"><i></i><i></i><i></i></span><span>融侨学迹<small>学校学业质量档案</small></span></a>
+    <div class="space-label"><span>校</span><div>学业质量档案<small>从概况回到每一份成绩</small></div></div>
+    <nav id="navigation" aria-label="主导航"></nav>
+    <div class="sidebar-bottom"><a href="/quick.html">打开一次性出表 <span>↗</span></a><p>数据保存在本机<br>每场考试都保留来源与口径</p></div>
+  </aside>
+  <div class="leader-shell">
+    <header class="leader-topbar"><div class="breadcrumb">融侨校区 <span>/</span> <strong id="breadcrumb">全校总览</strong></div><div class="topbar-actions"><span class="local-status"><i></i>本机工作空间</span><button class="btn secondary" id="present-button" data-action="presentation">汇报模式</button><button class="btn primary" data-action="open-import">导入一次成绩</button></div></header>
+    <main id="main" tabindex="-1">
+      <div class="page-heading"><div><h1 id="page-title">全校学情总览</h1><p id="page-subtitle">各年级独立统计，每个结果都能查看依据。</p></div><div id="heading-action"></div></div>
+      <div class="exam-toolbar" id="exam-toolbar"><label>当前考试<select id="exam-select" aria-label="选择考试"></select></label><span id="scope-description"></span><button class="text-button" data-action="rules">调整统计口径</button></div>
+      <div id="global-error" class="error" role="alert" hidden></div>
+      <div id="view-content" aria-live="polite"></div>
+      <footer class="leader-footer"><span>融侨学迹 · 学业质量档案</span><span>明细、统计与报告使用同一套计算规则</span></footer>
+    </main>
+  </div>
+  <div id="drawer-overlay" class="leader-overlay" hidden><section class="leader-drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title"><header><div><small id="drawer-label"></small><h2 id="drawer-title"></h2></div><button class="icon-close" data-action="close-drawer" aria-label="关闭详情">×</button></header><div id="drawer-content"></div></section></div>
+  <script src="/common.js"></script><script src="/leader.js"></script>
+</body>
+</html>

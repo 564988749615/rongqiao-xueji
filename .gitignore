@@ -1,0 +1,16 @@
+data/
+.venv/
+.runtime/
+__pycache__/
+*.pyc
+.DS_Store
+
+# Local/generated data and evidence. Do not upload student records.
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+样例/原始数据.xlsx
+首次分析结果/
+验收/
+.oil-ui/
+tests/evidence-*/

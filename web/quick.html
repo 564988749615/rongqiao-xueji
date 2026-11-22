@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#8061b5">
+  <title>融侨学迹 · 快速出表</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='12' fill='%238061b5'/%3E%3Cpath d='M12 13h24v23H12z' fill='none' stroke='white' stroke-width='3'/%3E%3Cpath d='M12 21h24M21 21v15' stroke='white' stroke-width='3'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="common.css">
+  <link rel="stylesheet" href="quick.css">
+  <script src="common.js" defer></script>
+  <script src="quick.js" defer></script>
+</head>
+<body class="quick-app">
+  <a class="quick-skip" href="#main">跳到主要内容</a>
+  <header class="quick-topbar">
+    <a class="quick-brand" href="/" aria-label="返回融侨学迹软件入口"><span class="quick-brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><b>融侨学迹</b><span class="quick-brand-divider"></span><span>快速出表</span></a>
+    <nav class="quick-top-actions" aria-label="软件导航"><span class="quick-local"><i></i>本机处理</span><a class="btn secondary" href="/leader.html">进入考试档案 <span aria-hidden="true">↗</span></a></nav>
+  </header>
+  <main id="main" class="quick-main">
+    <section class="quick-intro">
+      <div><h1>把原始成绩，变成分析表。</h1><p>导入一次，生成排名、等级、有效分与班情统计。复制到 Excel，或直接打印。</p></div>
+      <a class="quick-help-link" href="#rules-help">查看计算口径 <span aria-hidden="true">↓</span></a>
+    </section>
+
+    <div id="page-error" class="quick-inline-error" role="alert" hidden></div>
+    <section class="quick-input-panel panel" aria-labelledby="import-heading">
+      <div class="quick-section-heading"><div class="quick-step"><span>1</span><h2 id="import-heading">导入成绩</h2></div><span id="import-status" class="quick-section-note">支持 .xlsx、.xlsm、.csv</span></div>
+      <div class="quick-import-grid">
+        <div id="drop-zone" class="quick-drop-zone">
+          <span class="quick-upload-icon" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none"><path d="M9 4H20L26 10V28H6V7A3 3 0 0 1 9 4Z" stroke="currentColor" stroke-width="1.7"/><path d="M20 4V11H26M16 23V14M12 18L16 14L20 18" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          <div class="quick-upload-text"><b id="upload-title">拖入原始成绩表</b><p id="upload-description">表格应包含班级和各科成绩，姓名或学号可选。</p></div>
+          <label class="btn primary quick-file-button" for="file-input">选择成绩文件<input id="file-input" type="file" accept=".xlsx,.xlsm,.csv" aria-label="选择成绩文件"></label>
+          <button id="example-button" class="quick-text-button" type="button">使用已提供的原始数据.xlsx</button>
+        </div>
+        <div class="quick-import-fields">
+          <label class="field"><span>考试名称</span><input id="exam-name" type="text" maxlength="100" placeholder="如：初三定时练习（二）"></label>
+          <div class="quick-field-row"><label class="field"><span>年级</span><input id="exam-grade" type="text" maxlength="30" value="初三" placeholder="如：初三" list="grade-options"><datalist id="grade-options"><option value="初一"><option value="初二"><option value="初三"><option value="高一"><option value="高二"><option value="高三"></datalist></label><label class="field"><span>考试日期</span><input id="exam-date" type="date" value="2026-10-19"></label></div>
+          <details class="quick-password"><summary>文件有打开密码</summary><label class="field"><span>密码 <small>仅用于本次读取</small></span><input id="file-password" type="password" autocomplete="off" placeholder="加密文件选填"></label></details>
+        </div>
+      </div>
+      <div id="dataset-summary" class="quick-dataset-summary" hidden></div>
+      <details id="import-warnings" class="quick-validation" hidden><summary id="import-warnings-summary">导入核验</summary><div id="import-warnings-body"></div></details>
+    </section>
+
+    <section id="rules-section" class="quick-rules-panel panel" aria-labelledby="rules-heading" hidden>
+      <div class="quick-section-heading"><div class="quick-step"><span>2</span><h2 id="rules-heading">确认计算范围</h2></div><span class="quick-section-note">边界同分者全部纳入</span></div>
+      <div class="quick-rules-main">
+        <div class="quick-rule-group"><span class="quick-field-label">纳入班级</span><div class="quick-segment" role="group" aria-label="纳入班级"><button type="button" data-scope="all" class="selected" aria-pressed="true">全部班级</button><button type="button" data-scope="first20" aria-pressed="false">01—20 班</button><button type="button" data-scope="custom" aria-pressed="false">自选班级</button></div><div id="class-options" class="quick-check-options" hidden></div><p id="scope-caption" class="quick-field-note"></p></div>
+        <div class="quick-rule-group"><span class="quick-field-label">计入总分的科目</span><div id="subject-options" class="quick-check-options"></div><p class="quick-field-note">按实际提供的科目计算，体育需有对应成绩列。</p></div>
+      </div>
+      <details id="advanced-rules" class="quick-advanced"><summary>更多计算设置 <span>有效分比例、零分处理、满分</span></summary>
+        <div class="quick-advanced-grid">
+          <label class="field"><span>有效分取前多少</span><div class="quick-suffix-input"><input id="cutoff-ratio" type="number" value="30" min="1" max="100" step="0.1"><span>%</span></div></label>
+          <label class="field"><span>零分处理</span><select id="zero-policy"><option value="exclude">不计入实考人数和均分</option><option value="include">按真实零分计入</option></select></label>
+          <label class="field"><span>缺少科目成绩时</span><select id="missing-policy"><option value="exclude_total">不生成该生总分和排名</option><option value="zero">按 0 分合计总分</option></select></label>
+          <label class="field"><span>每人输出薄弱科数量</span><select id="weak-count"><option value="1">1 科</option><option value="2">2 科</option><option value="3">3 科</option><option value="4" selected>4 科</option><option value="5">5 科</option><option value="6">6 科</option><option value="7">7 科</option></select></label>
+        </div>
+        <div class="quick-marks-section"><span class="quick-field-label">科目满分 <small>选填，填写后可计算得分率</small></span><div id="full-mark-options" class="quick-full-marks"></div></div>
+        <p class="quick-field-note">默认将数值 0 与缺失区分；0 分仍可参与有效总分人群中的单科排名。薄弱科按名次差排序，同值按科目顺序取不同学科。</p>
+      </details>
+      <div class="quick-generate-row"><span id="rules-feedback" class="quick-field-note">按所选范围统一生成所有报表。</span><button id="generate-button" type="button" class="btn primary"><span class="quick-button-symbol" aria-hidden="true">✦</span>生成分析表</button></div>
+    </section>
+
+    <section id="results-section" class="quick-results" aria-labelledby="results-heading" hidden>
+      <div class="quick-section-heading quick-result-heading"><div class="quick-step"><span>3</span><h2 id="results-heading">分析结果</h2><span id="result-version" class="quick-result-version"></span></div><div class="quick-results-top-actions"><button id="workbook-button" type="button" class="btn secondary">下载全部 Excel</button><button id="print-all-button" type="button" class="btn secondary">打印全部表</button><button id="save-button" type="button" class="btn primary">保存到全校平台</button></div></div>
+      <div id="stale-notice" class="quick-stale-notice" role="status" hidden><span>计算条件已改变，当前表格尚未更新。</span><button type="button" id="regenerate-button">重新生成 →</button></div>
+      <div id="save-feedback" class="quick-save-feedback" role="status" hidden></div>
+      <div id="result-summary" class="quick-result-summary"></div>
+      <section class="quick-table-panel panel" aria-label="分析表格">
+        <div id="table-tabs" class="quick-table-tabs" role="tablist" aria-label="选择分析表"></div>
+        <div class="quick-table-heading"><div><h3 id="table-title"></h3><p id="table-note"></p></div><span id="table-count" class="quick-row-count"></span></div>
+        <div class="quick-table-toolbar"><div class="quick-table-filters"><label class="quick-filter"><span class="sr-only">筛选班级</span><select id="table-class"><option value="">全部班级</option></select></label><label class="quick-search"><span aria-hidden="true"><svg viewBox="0 0 20 20" fill="none"><circle cx="8.5" cy="8.5" r="5.5" stroke="currentColor" stroke-width="1.5"/><path d="M13 13L17 17" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></span><input id="table-search" type="search" placeholder="搜索表内内容" aria-label="搜索当前分析表"></label></div><div class="quick-table-actions"><button id="copy-button" type="button" class="btn secondary">复制整表</button><button id="csv-button" type="button" class="btn secondary">下载 CSV</button><button id="print-button" type="button" class="btn secondary">打印此表</button></div></div>
+        <div id="table-container" class="quick-table-container" role="tabpanel" tabindex="0"></div>
+        <div class="quick-table-bottom"><p id="table-footnote">复制、下载和打印包含当前筛选的全部行。</p><div class="quick-pagination"><label><span>每页</span><select id="page-size" aria-label="每页行数"><option value="30">30 行</option><option value="50">50 行</option><option value="100">100 行</option></select></label><button id="previous-page" type="button" aria-label="上一页">‹</button><span id="page-label">1 / 1</span><button id="next-page" type="button" aria-label="下一页">›</button></div></div>
+      </section>
+    </section>
+
+    <section id="before-results" class="quick-before-results"><span aria-hidden="true"><svg viewBox="0 0 32 32" fill="none"><path d="M6 5H26V27H6zM6 12H26M13 12V27M6 19H26" stroke="currentColor" stroke-width="1.5"/></svg></span><div><h2>一份原始表，生成一组可用的报表</h2><p>成绩排名 · ABC 等级 · 六等级 · 有效分 · 班级统计 · 前 N 名人数 · 薄弱学科</p></div></section>
+    <details id="rules-help" class="quick-help"><summary>计算口径与使用说明</summary><div class="quick-help-grid"><div><h3>本次出表怎么算</h3><p>同分同名次，后续名次跳号；按实际参与人数确定分界，边界同分全纳入。ABC 累计比例为 30%、80%、100%，六等级为 18%、30%、55%、80%、90%、100%。</p></div><div><h3>原始表能提供什么</h3><p>体育须在原始表中提供，历次进退与综合名次须有多次考试数据。姓名和学号都为空时，用原表行号定位学生，不据此建立跨次个人关联。</p></div><div><h3>数据保存在什么地方</h3><p>快速出表的成绩只在当前页面使用。点击“保存到全校平台”后才长期保存；刷新小软件前，请先下载需要的结果。数据始终在本机处理。</p></div></div></details>
+    <footer class="quick-footer"><span>融侨学迹 · 让每张表都有来处</span><a href="/">两个软件的入口</a></footer>
+  </main>
+</body>
+</html>
