@@ -475,6 +475,7 @@ def _restore_backup_dict(backup: dict, *, mode: str = 'append_only') -> dict:
     default_rules_updated = False
     timestamp = now()
     touched_exam_ids: set[str] = set()
+    newly_inserted_exam_ids: set[str] = set()
 
     with db() as conn:
         for item in exams:
@@ -504,6 +505,7 @@ def _restore_backup_dict(backup: dict, *, mode: str = 'append_only') -> dict:
                     ),
                 )
                 exams_added += 1
+                newly_inserted_exam_ids.add(item['id'])
             elif smart:
                 loc_upd = str(existing['updated_at'] or existing['created_at'] or '')
                 if not loc_upd or cloud_upd > loc_upd:
@@ -615,10 +617,16 @@ def _restore_backup_dict(backup: dict, *, mode: str = 'append_only') -> dict:
             new_cnt = _recount_active_edits(conn, eid)
             cur = conn.execute('SELECT data_version FROM exams WHERE id=?', (eid,)).fetchone()
             cur_ver = int(cur['data_version'] or 1) if cur else 1
-            conn.execute(
-                'UPDATE exams SET edit_count=?, data_version=?, updated_at=? WHERE id=?',
-                (new_cnt, cur_ver + 1, timestamp, eid),
-            )
+            if eid in newly_inserted_exam_ids:
+                conn.execute(
+                    'UPDATE exams SET edit_count=? WHERE id=?',
+                    (new_cnt, eid),
+                )
+            else:
+                conn.execute(
+                    'UPDATE exams SET edit_count=?, data_version=?, updated_at=? WHERE id=?',
+                    (new_cnt, cur_ver + 1, timestamp, eid),
+                )
 
         if isinstance(backup.get('default_rules'), dict) and backup['default_rules']:
             cleaned_def = validate_portable_rules(backup['default_rules'])

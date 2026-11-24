@@ -541,5 +541,78 @@ class Task9PublishLockTests(ScoreEditsBaseTest):
         self.assertEqual(saved['edit_count'], 1)
 
 
+class Task10EndToEndWalkthroughTests(ScoreEditsBaseTest):
+    def test_full_walkthrough_edit_3_revoke_1_export_backup_restore_fresh_dir(self):
+        import zipfile
+        ds = _sample_dataset('exam-e2e-1', '初三全流程验收', '2026-11-24')
+        self._post('/api/exams', {'dataset': ds})
+
+        # Edit 3 cells in one batch -> data_version=2, edit_count=3
+        save_res = self._post(f"/api/exams/{ds['id']}/scores", {
+            'edits': [
+                {'row_id': 'student:102', 'subject': '数学', 'value': 142},
+                {'row_id': 'student:103', 'subject': '语文', 'value': 132},
+                {'row_id': 'student:201', 'subject': '英语', 'value': None},
+            ],
+            'reason': '考后复核三处更正',
+        })
+        self.assertEqual(save_res['data_version'], 2)
+        self.assertEqual(save_res['edit_count'], 3)
+
+        # Revoke 1 edit (student:103 语文) -> data_version=3, edit_count=2
+        edits_before = self._get_json(f"/api/exams/{ds['id']}/scores/edits")['edits']
+        e_103 = next(x for x in edits_before if x['row_id'] == 'student:103' and x['subject'] == '语文')
+        rev_res = self._post(f"/api/exams/{ds['id']}/scores/edits/{e_103['id']}/revoke", {})
+        self.assertEqual(rev_res['data_version'], 3)
+        self.assertEqual(rev_res['edit_count'], 2)
+
+        # Verify analysis & exports carry v3 + 2 edits
+        ana_orig = self._post('/api/analyze', {'exam_id': ds['id']})
+        self.assertEqual(ana_orig['metadata']['data_version'], 3)
+        self.assertEqual(ana_orig['metadata']['edit_count'], 2)
+
+        abc_raw, _ = self._get(f"/api/exams/{ds['id']}/class-abc.xlsx?mode=six")
+        wb_abc = openpyxl.load_workbook(io.BytesIO(abc_raw))
+        ws_abc = wb_abc['01班']
+        self.assertIn('数据版本 v3 · 含 2 处更正', str(ws_abc['A2'].value or '') + ' ' + str(ws_abc.oddFooter.left.text or ''))
+
+        zip_raw, _ = self._get(f"/api/exams/{ds['id']}/class-packages.zip")
+        with zipfile.ZipFile(io.BytesIO(zip_raw)) as zf:
+            self.assertIn('数据版本 v3 · 含 2 处更正', zf.read('01班/01班_班情分析打印版.html').decode('utf-8'))
+
+        # Backup v2
+        backup_payload = self._get_json('/api/backup')
+        self.assertEqual(backup_payload['version'], 2)
+
+        # Restore into completely fresh data dir
+        with tempfile.TemporaryDirectory() as fresh_dir:
+            prev_data = server.DATA
+            try:
+                server.DATA = Path(fresh_dir)
+                server.init_db()
+                server.invalidate_cache()
+
+                restored = self._post('/api/restore', {'backup': backup_payload})
+                self.assertEqual(restored['count'], 1)
+
+                ana_fresh = self._post('/api/analyze', {'exam_id': ds['id']})
+                self.assertEqual(ana_fresh['metadata']['data_version'], 3)
+                self.assertEqual(ana_fresh['metadata']['edit_count'], 2)
+                self.assertEqual(ana_fresh['cutoffs'], ana_orig['cutoffs'])
+                self.assertEqual(
+                    [(s['id'], s['total'], s['rank'], s['scores']) for s in ana_fresh['students']],
+                    [(s['id'], s['total'], s['rank'], s['scores']) for s in ana_orig['students']],
+                )
+                # Raw dataset untouched even after backup/restore
+                detail_fresh = self._get_json(f"/api/exams/{ds['id']}")
+                raw_102 = next(r for r in detail_fresh['dataset']['rows'] if r['id'] == 'student:102')
+                self.assertEqual(raw_102['scores']['数学'], 118)
+                eff_102 = next(r for r in detail_fresh['effective_dataset']['rows'] if r['id'] == 'student:102')
+                self.assertEqual(eff_102['scores']['数学'], 142.0)
+            finally:
+                server.DATA = prev_data
+                server.invalidate_cache()
+
+
 if __name__ == '__main__':
     unittest.main()
