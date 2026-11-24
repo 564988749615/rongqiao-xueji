@@ -10,6 +10,38 @@ import zipfile
 from class_brief import build_class_brief
 from history import calc_pr, calc_t_score
 
+# Polyphonic Chinese surname overrides mapped to GB2312 Level-1 homophones for accurate Pinyin sorting
+_SURNAME_PINYIN_MAP = {
+    '仇': '秋', '单': '山', '解': '谢', '查': '扎', '区': '欧',
+    '朴': '飘', '乐': '月', '盖': '哥', '柏': '白', '翟': '宅',
+    '折': '蛇', '员': '云', '冼': '显', '尉': '玉', '覃': '秦',
+    '繁': '婆', '缪': '妙', '种': '虫', '秘': '闭', '都': '督',
+    '那': '纳', '乜': '聂', '曾': '增', '任': '人', '沈': '审',
+    '燕': '烟', '俞': '鱼', '臧': '脏', '竺': '竹', '贾': '假',
+    '褚': '楚', '逄': '旁', '阚': '看', '谌': '陈', '宿': '素',
+    '盛': '胜', '纪': '记', '解': '谢', '隗': '伟', '万': '万',
+}
+
+
+def surname_sort_key(name: str) -> tuple:
+    """Deterministic Chinese surname Pinyin sort key using stdlib GBK ordering + polyphonic map."""
+    text = str(name or '').strip()
+    if not text:
+        return (1, b'', '')
+    first = _SURNAME_PINYIN_MAP.get(text[0], text[0])
+    normalized = first + text[1:]
+    try:
+        key_bytes = normalized.encode('gbk')
+    except UnicodeEncodeError:
+        parts = []
+        for ch in normalized:
+            try:
+                parts.append(ch.encode('gbk'))
+            except UnicodeEncodeError:
+                parts.append(b'\xff' + ch.encode('utf-8'))
+        key_bytes = b''.join(parts)
+    return (0, key_bytes, text)
+
 
 def _mean_std(values: list[float]) -> tuple[float | None, float | None]:
     if not values:
@@ -452,17 +484,270 @@ def build_class_packages_zip(
             f"考试：{target_info['grade']} · {target_info['name']}（{target_info['date']}）\n"
             f"包含班级：共 {len(classes)} 个班（{', '.join(c + '班' for c in classes)}）\n\n"
             f"使用说明：\n"
-            f"1. 每个文件夹仅包含对应班级的学生成绩明细与班情诊断，不包含任何其他班级的学生名单，可直接点对点发给对应班主任。\n"
-            f"2. Excel 文件适合二次整理与留档；HTML 文件用任意浏览器双击打开即可直接 A4 打印。\n"
+            f"1. 每个文件夹仅包含对应班级的学生成绩、ABC 等级表与班情诊断，不包含任何其他班级的学生名单，可直接点对点发给对应班主任。\n"
+            f"2. 「ABC等级表(按姓氏).xlsx」不含原始分数与名次，按学生姓氏拼音排序，可直接发给科任老师或用于教学留档。\n"
+            f"3. HTML 文件用任意浏览器双击打开即可直接 A4 打印。\n"
         )
         zf.writestr('分发说明.txt', readme.encode('utf-8'))
         for cls in classes:
             brief = build_class_brief(grade_exams, exam_id, cls, high_ratio=high_ratio, main_ratio=main_ratio)
             folder = f'{cls}班'
             xlsx_bytes = _class_excel_bytes(target_analysis, brief, cls)
+            _, abc_bytes = build_class_abc_workbook(
+                target_analysis,
+                mode='six',
+                class_name=cls,
+                teachers_map={cls: {'homeroom': brief['meta'].get('homeroom') or ''}},
+            )
             html_text = _class_print_html(target_analysis, brief)
             zf.writestr(f'{folder}/{cls}班_成绩与学科诊断.xlsx', xlsx_bytes)
+            zf.writestr(f'{folder}/{cls}班_ABC等级表(按姓氏).xlsx', abc_bytes)
             zf.writestr(f'{folder}/{cls}班_班情分析打印版.html', html_text.encode('utf-8'))
 
     safe_exam = re.sub(r'[\\/:*?"<>|]', '_', f"{target_info['grade']}_{target_info['name']}")
     return f'{safe_exam}_各班分发包.zip', buf.getvalue()
+
+
+def _extract_tier_labels(analysis: dict, mode: str) -> list[str]:
+    rules = analysis.get('rules') or {}
+    key = 'abc_bounds' if mode == 'abc' else 'level_bounds'
+    default = ['A', 'B', 'C'] if mode == 'abc' else ['A1', 'A2', 'B1', 'B2', 'C1', 'C2']
+    raw = rules.get(key) or []
+    labels = []
+    for item in raw:
+        if isinstance(item, dict) and item.get('label'):
+            labels.append(str(item['label']))
+        elif isinstance(item, (list, tuple)) and item:
+            labels.append(str(item[0]))
+    return labels or default
+
+
+def _grade_cell_style(label: str):
+    """Return (fill_hex, font_hex, bold) for an A/B/C or A1-C2 grade cell."""
+    up = str(label or '').strip().upper()
+    if up.startswith('A'):
+        return ('EAF5EE', '225B43', True)
+    if up.startswith('B'):
+        return ('F2EEFA', '493559', False)
+    if up.startswith('C'):
+        return ('FDF2E9', '9A4D16', False)
+    return ('F8F7FA', '8C849E', False)
+
+
+def _populate_class_abc_sheet(ws, analysis: dict, cls: str, *, mode: str = 'six', homeroom: str = '') -> None:
+    """Populate a single worksheet with a class's desensitized ABC/6-level table sorted by Chinese surname."""
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    meta = analysis.get('metadata') or {}
+    subjects = list(analysis.get('subjects') or [])
+    grade_key = 'grades' if mode == 'abc' else 'levels'
+    mode_label = '三级（A / B / C）' if mode == 'abc' else '六级（A1 / A2 / B1 / B2 / C1 / C2）'
+    tier_labels = _extract_tier_labels(analysis, mode)
+
+    cls_students = sorted(
+        [s for s in analysis.get('students') or [] if s.get('class') == cls],
+        key=lambda s: surname_sort_key(s.get('name', '')),
+    )
+
+    ws.sheet_view.showGridLines = False
+    ws.append([f"{meta.get('grade', '')} · {meta.get('name', '')} · {cls}班 学生等级表（按姓氏排序）"])
+    sub_parts = [
+        f"考试日期：{meta.get('date', '')}",
+        f"班主任：{homeroom}" if homeroom else '',
+        f"人数：{len(cls_students)}人",
+        f"等级口径：{mode_label}",
+        '按姓氏拼音排序',
+    ]
+    ws.append([' · '.join(p for p in sub_parts if p)])
+    ws.append([])
+
+    headers = ['序号', '姓名', '总评', *subjects]
+    ws.append(headers)
+
+    col_counts: list[dict[str, int]] = [{} for _ in range(1 + len(subjects))]
+    col_valid: list[int] = [0 for _ in range(1 + len(subjects))]
+
+    for idx, s in enumerate(cls_students, 1):
+        gmap = s.get(grade_key) or {}
+        total_g = str(gmap.get('总分') or '').strip()
+        sub_gs = [str(gmap.get(sub) or '').strip() for sub in subjects]
+        ws.append([idx, _safe_excel_cell(s.get('name', '')), total_g or '—', *[g or '—' for g in sub_gs]])
+        for ci, val in enumerate([total_g, *sub_gs]):
+            if val:
+                col_counts[ci][val] = col_counts[ci].get(val, 0) + 1
+                col_valid[ci] += 1
+
+    data_end_row = 4 + len(cls_students)
+
+    # Bottom summary rows: each tier count + A档率
+    ws.append([])
+    summary_start = ws.max_row + 1
+    for tier in tier_labels:
+        ws.append(['', f'{tier} 人数', *[col_counts[ci].get(tier, 0) for ci in range(1 + len(subjects))]])
+    a_rates = []
+    for ci in range(1 + len(subjects)):
+        denom = col_valid[ci]
+        a_cnt = sum(cnt for k, cnt in col_counts[ci].items() if str(k).upper().startswith('A'))
+        a_rates.append(f'{(100.0 * a_cnt / denom):.1f}%' if denom else '—')
+    ws.append(['', 'A档占比', *a_rates])
+    summary_end = ws.max_row
+
+    # Styling
+    thin = Side(style='thin', color='DCD6E8')
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    last_col = get_column_letter(len(headers))
+    ws.merge_cells(f'A1:{last_col}1')
+    ws.merge_cells(f'A2:{last_col}2')
+    ws['A1'].font = Font(name='Microsoft YaHei', size=14, bold=True, color='4F358C')
+    ws['A1'].alignment = Alignment(horizontal='left', vertical='center')
+    ws['A2'].font = Font(name='Microsoft YaHei', size=9.5, color='6D6380')
+    ws['A2'].alignment = Alignment(horizontal='left', vertical='center')
+    ws.row_dimensions[1].height = 24
+    ws.row_dimensions[2].height = 18
+    ws.row_dimensions[3].height = 6
+    ws.row_dimensions[4].height = 23
+
+    for cell in ws[4]:
+        cell.fill = PatternFill('solid', fgColor='EDE7F8')
+        cell.font = Font(name='Microsoft YaHei', size=10, bold=True, color='3F2B6B')
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+        cell.border = border
+
+    row_height = 17.5 if len(cls_students) > 48 else 19.5
+    for r_idx in range(5, data_end_row + 1):
+        ws.row_dimensions[r_idx].height = row_height
+        zebra = r_idx % 2 == 0
+        for c_idx in range(1, len(headers) + 1):
+            cell = ws.cell(row=r_idx, column=c_idx)
+            cell.border = border
+            if c_idx == 1:
+                cell.font = Font(name='Microsoft YaHei', size=9.5, color='6D6380')
+                cell.alignment = Alignment(horizontal='center', vertical='center')
+                if zebra:
+                    cell.fill = PatternFill('solid', fgColor='FAF8FD')
+            elif c_idx == 2:
+                cell.font = Font(name='Microsoft YaHei', size=10, bold=True, color='231E33')
+                cell.alignment = Alignment(horizontal='center', vertical='center')
+                if zebra:
+                    cell.fill = PatternFill('solid', fgColor='FAF8FD')
+            else:
+                bg, fg, is_bold = _grade_cell_style(cell.value)
+                cell.fill = PatternFill('solid', fgColor=bg)
+                cell.font = Font(name='Microsoft YaHei', size=9.5, bold=(is_bold or c_idx == 3), color=fg)
+                cell.alignment = Alignment(horizontal='center', vertical='center')
+
+    for r_idx in range(summary_start, summary_end + 1):
+        ws.row_dimensions[r_idx].height = 18.5
+        is_rate_row = r_idx == summary_end
+        for c_idx in range(1, len(headers) + 1):
+            cell = ws.cell(row=r_idx, column=c_idx)
+            cell.border = border
+            cell.fill = PatternFill('solid', fgColor='EDE7F8' if is_rate_row else 'F8F6FC')
+            cell.font = Font(
+                name='Microsoft YaHei',
+                size=9.5,
+                bold=(is_rate_row or c_idx == 2),
+                color='3F2B6B' if is_rate_row else '493559',
+            )
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+
+    ws.column_dimensions['A'].width = 6.5
+    ws.column_dimensions['B'].width = 11.5
+    ws.column_dimensions['C'].width = 9.0
+    for idx in range(4, len(headers) + 1):
+        sub_name = str(headers[idx - 1])
+        ws.column_dimensions[get_column_letter(idx)].width = max(8.2, min(12, len(sub_name) * 2.2 + 3.6))
+
+    ws.freeze_panes = 'C5'
+    ws.print_title_rows = '1:4'
+    ws.print_options.horizontalCentered = True
+    ws.page_setup.orientation = 'portrait'
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 1
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.page_margins.left = 0.35
+    ws.page_margins.right = 0.35
+    ws.page_margins.top = 0.4
+    ws.page_margins.bottom = 0.4
+
+
+def build_class_abc_workbook(
+    analysis: dict,
+    *,
+    mode: str = 'six',
+    class_name: str = '',
+    teachers_map: dict | None = None,
+) -> tuple[str, bytes]:
+    """Export per-class ABC (or A1-C2) grade tables sorted by Chinese surname Pinyin (zero scores/ranks)."""
+    from openpyxl import Workbook
+
+    norm_mode = 'abc' if str(mode or '').lower() == 'abc' else 'six'
+    classes = list(analysis.get('classes') or [])
+    if class_name:
+        if class_name not in classes:
+            raise ValueError(f'当前考试中未找到 {class_name} 班。')
+        classes = [class_name]
+    if not classes:
+        raise ValueError('当前考试没有可导出的班级。')
+
+    wb = Workbook()
+    wb.remove(wb.active)
+    used_names: set[str] = set()
+    tmap = teachers_map or {}
+
+    for cls in classes:
+        base_title = re.sub(r'[\\/*?:\[\]]', '-', f'{cls}班')[:28] or '班级'
+        sheet_title = base_title
+        n = 1
+        while sheet_title in used_names:
+            n += 1
+            sheet_title = f'{base_title[:25]}_{n}'
+        used_names.add(sheet_title)
+        ws = wb.create_sheet(sheet_title)
+        hr = str((tmap.get(cls) or {}).get('homeroom') or '')
+        _populate_class_abc_sheet(ws, analysis, cls, mode=norm_mode, homeroom=hr)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    meta = analysis.get('metadata') or {}
+    mode_tag = 'ABC等级表' if norm_mode == 'abc' else 'A1-C2等级表'
+    scope_tag = f'{class_name}班' if class_name else '各班'
+    safe_prefix = re.sub(r'[\\/:*?"<>|]', '_', f"{meta.get('grade', '')}_{meta.get('name', '')}").strip('_') or '成绩'
+    filename = f'{safe_prefix}_{scope_tag}{mode_tag}(按姓氏).xlsx'
+    return filename, buf.getvalue()
+
+
+def build_class_abc_zip(
+    analysis: dict,
+    *,
+    mode: str = 'six',
+    teachers_map: dict | None = None,
+) -> tuple[str, bytes]:
+    """Export 1 isolated ABC (or A1-C2) Excel file per class in a ZIP bundle (sorted by surname, zero scores/ranks)."""
+    norm_mode = 'abc' if str(mode or '').lower() == 'abc' else 'six'
+    classes = list(analysis.get('classes') or [])
+    if not classes:
+        raise ValueError('当前考试没有可导出的班级。')
+    meta = analysis.get('metadata') or {}
+    mode_tag = 'ABC等级表' if norm_mode == 'abc' else 'A1-C2等级表'
+    tmap = teachers_map or {}
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
+        readme = (
+            f"融侨学迹 · 各班学生{mode_tag}（按姓氏排序）\n"
+            f"考试：{meta.get('grade', '')} · {meta.get('name', '')}（{meta.get('date', '')}）\n"
+            f"包含班级：共 {len(classes)} 个班（{', '.join(c + '班' for c in classes)}）\n\n"
+            f"说明：\n"
+            f"1. 每个 Excel 文件仅包含对应班级的学生，按学生姓氏拼音（A–Z）排序。\n"
+            f"2. 已自动排版为 A4 竖版一页纸，可直接打印或发给对应班主任与科任教师。\n"
+        )
+        zf.writestr('使用说明.txt', readme.encode('utf-8'))
+        for cls in classes:
+            _, xlsx_bytes = build_class_abc_workbook(analysis, mode=norm_mode, class_name=cls, teachers_map=tmap)
+            zf.writestr(f'{cls}班_{mode_tag}(按姓氏).xlsx', xlsx_bytes)
+
+    safe_prefix = re.sub(r'[\\/:*?"<>|]', '_', f"{meta.get('grade', '')}_{meta.get('name', '')}").strip('_') or '成绩'
+    return f'{safe_prefix}_各班{mode_tag}(按姓氏分班包).zip', buf.getvalue()

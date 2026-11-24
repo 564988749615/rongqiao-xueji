@@ -63,7 +63,7 @@
     const rows = filterLevers(lp.student_levers || [], filterMode, sortMode, lp.tiers || []);
     const base = lp.transitions?.compare_exam;
     return {
-      title: `${brief.meta.class}班 · 学生无分无名次抓手清单（教师脱敏版）`,
+      title: `${brief.meta.class}班 · 学生学情与帮扶清单`,
       columns: ['姓名', '状态信号', '升档临门一脚', '拖档 / 薄弱科（★连弱）', '优势鼓励科', '波动主因'],
       rows: rows.map(r => [
         r.name,
@@ -73,7 +73,7 @@
         formatStrengthText(r.strength_subjects),
         r.driver_text || '—',
       ]),
-      note: `${brief.meta.grade} · ${brief.meta.exam_name} · 教师脱敏版（按姓氏拼音排序，不含原始分数与具体名次） · 对比基准：${base ? base.name : '暂无'}`,
+      note: `${brief.meta.grade} · ${brief.meta.exam_name} · 按姓氏拼音排序 · 对比基准：${base ? base.name : '暂无'}`,
     };
   }
 
@@ -115,14 +115,14 @@
     </div>` : '<p class="inline-help" style="margin:8px 0 0">导入同年级多场考试后，此处自动统计较上次升档、守档与降档流动。</p>';
 
     const synTable = `<div class="section-title" style="margin-top:16px">
-      <div><h3>学科脱敏协同表（无均分 · 无分数线）</h3><p>用 A 档率、优良率、待转化率与「高总评·本科未达A」精准识别协同短板</p></div>
+      <div><h3>学科等级协同表</h3><p>按各科等级统计 A 档率、优良率、待转化率与学科认领名单</p></div>
     </div>
     <div class="table-wrap"><table>
       <thead><tr>
         <th>学科</th><th>任课教师</th>
         ${tiers.map(t => `<th class="number">${e(t)}</th>`).join('')}
         <th class="number">A档率</th><th class="number">优良率</th><th class="number">待转化率</th>
-        <th>总评A但本科未达A（优先认领）</th>
+        <th>认领名单</th>
       </tr></thead>
       <tbody>${syn.map(s => {
         const miss = (s.mismatch_a_students || []).slice().sort((a, b) => cmpSurname(a.name, b.name)).map(x => `${x.name}(${x.total_level}→${x.sub_level})`).join('、') || '—';
@@ -182,7 +182,7 @@
         `<button type="button" data-action="brief-lvl-filter" data-filter="${id}" class="${filterMode === id ? 'active' : ''}">${e(label)}</button>`
       ).join('')}</div>
       <div class="spacer"></div>
-      <button type="button" class="btn secondary small" data-action="copy-brief-levers">复制脱敏清单</button>
+      <button type="button" class="btn secondary small" data-action="copy-brief-levers">复制清单</button>
       <button type="button" class="btn secondary small" data-action="csv-brief-levers">CSV</button>
       <button type="button" class="btn primary small" data-action="print-brief-levers">打印本清单（1页A4）</button>
     </div>
@@ -193,7 +193,7 @@
       </tr></thead>
       <tbody>${trs}</tbody>
     </table></div>
-    <p class="table-note">本视图严格遵循「零分数 · 零名次」脱敏原则，默认按姓氏拼音顺序排列，查人快捷且绝不泄露任何名次先后；可直接用于科任教师教学帮扶与谈心。</p>`;
+    <p class="table-note">默认按姓氏拼音顺序排列，便于科任教师快速查人、开展针对性帮扶与谈心。</p>`;
   }
 
   function renderGroupsTab(brief, lp, state) {
@@ -221,7 +221,7 @@
 
     const mismatchSorted = (item.mismatch_a_students || []).slice().sort((a, b) => cmpSurname(a.name, b.name));
     const mismatchBox = item.mismatch_a_count ? `<div class="lvl-claim-box">
-      <strong>优先认领 · 总评已达 A 档但「${e(item.subject)}」未达 A 档（${item.mismatch_a_count} 人）</strong>
+      <strong>认领名单（${item.mismatch_a_count} 人）</strong>
       <p>${mismatchSorted.map(x => `<span class="hygiene-chip is-warn">${e(x.name)}（总评${e(x.total_level)} · ${e(item.subject)}${e(x.sub_level)}）</span>`).join(' ')}</p>
     </div>` : '';
 
@@ -250,17 +250,18 @@
     return `<section class="panel lvl-panel">
       <div class="section-title">
         <div>
-          <h2 class="brief-hero-title"><span>六层等级与教师脱敏抓手（无分无名次）</span><span class="badge">${e(lp.structure_tag)}</span></h2>
-          <p>按口径等级（${e(tiersText)}）生成脱敏教学抓手，不透露任何学生原始分数与具体名次，方便直接发给科任老师</p>
+          <h2 class="brief-hero-title"><span>等级分布与教学抓手</span><span class="badge">${e(lp.structure_tag)}</span></h2>
+          <p>按口径等级（${e(tiersText)}）生成班级等级画像、学生帮扶清单与分层教学分组，适合直接发给科任老师</p>
         </div>
         <div class="panel-heading-actions">
-          <button type="button" class="btn primary small" data-action="print-teacher-safe">打印教师脱敏抓手册</button>
+          <button type="button" class="btn secondary small" data-action="open-abc-export">导出各班 ABC 表（按姓氏）</button>
+          <button type="button" class="btn primary small" data-action="print-teacher-safe">打印教师版学情册</button>
         </div>
       </div>
       <div class="tab-strip compact-tabs">
-        <button type="button" data-action="brief-lvl-tab" data-tab="dist" class="${tab === 'dist' ? 'active' : ''}">六层分布与学科协同</button>
-        <button type="button" data-action="brief-lvl-tab" data-tab="levers" class="${tab === 'levers' ? 'active' : ''}">学生脱敏抓手清单（${n(lp.counts?.all ?? lp.counts?.total, 0)}）</button>
-        <button type="button" data-action="brief-lvl-tab" data-tab="groups" class="${tab === 'groups' ? 'active' : ''}">单科四层教学分组</button>
+        <button type="button" data-action="brief-lvl-tab" data-tab="dist" class="${tab === 'dist' ? 'active' : ''}">等级分布与学科协同</button>
+        <button type="button" data-action="brief-lvl-tab" data-tab="levers" class="${tab === 'levers' ? 'active' : ''}">学生学情与帮扶清单（${n(lp.counts?.all ?? lp.counts?.total, 0)}）</button>
+        <button type="button" data-action="brief-lvl-tab" data-tab="groups" class="${tab === 'groups' ? 'active' : ''}">单科分层教学分组</button>
       </div>
       ${body}
     </section>`;
@@ -301,8 +302,8 @@
 
     return `<section class="pm-mod pm-avoid">
       <div class="pm-mod-head">
-        <h3>六层等级分布与学科脱敏协同表（无分无名次）</h3>
-        <span>结构画像：${e(lp.structure_tag)} · 全程不含原始分数与具体名次</span>
+        <h3>等级分布与学科协同表</h3>
+        <span>结构画像：${e(lp.structure_tag)}</span>
       </div>
       <div class="pm-lvl-grid" style="grid-template-columns:repeat(${Math.min(tiers.length, 6)}, 1fr)">${distCells}</div>
       <div class="pm-flow-bar">${flowLine}</div>
@@ -311,7 +312,7 @@
           <th style="width:38px">学科</th><th class="c" style="width:50px">教师</th>
           ${tiers.map(t => `<th class="num" style="width:26px">${e(t)}</th>`).join('')}
           <th class="num" style="width:42px">A档率</th><th class="num" style="width:42px">优良率</th><th class="num" style="width:44px">待转化</th>
-          <th>总评A但本科未达A（认领名单）</th>
+          <th>认领名单</th>
         </tr></thead>
         <tbody>${synRows}</tbody>
       </table>
@@ -370,7 +371,7 @@
     if (cfg.m10IncludeGroups) {
       const syn = lp.subject_synergy || [];
       groupsBlock = `<div class="pm-mod pm-break-before">
-        <div class="pm-mod-head"><h3>各学科课堂四层教学分组（无分无名次）</h3><span>按单科档位自动分组，组内按姓氏拼音排序，供科任教师分层作业与面批</span></div>
+        <div class="pm-mod-head"><h3>各学科课堂分层教学分组</h3><span>按单科档位自动分组，组内按姓氏拼音排序，供科任教师分层作业与面批</span></div>
         ${syn.map(s => `<div class="pm-avoid pm-sub-block">
           <div class="pm-sub-bar">${e(s.subject)}（${e(s.teacher || '未录教师')} · A档率 ${pct(s.a_rate)} · 待转化 ${pct(s.c_rate)}）</div>
           <table class="pm-table pm-tight">
@@ -386,8 +387,8 @@
     const pageBreakCls = cfg.m10PageBreak && !isFirstModule ? ' pm-break-before' : '';
     return `<section class="pm-mod pm-m10${pageBreakCls}">
       <div class="pm-mod-head">
-        <h3>学生无分无名次抓手清单（${e(filterLabels[filterMode] || '全班学生')} · ${rows.length} 人）</h3>
-        <span>${sortLabel}（不含分数与名次） · ★连续薄弱科 · 冲X★表示单科卡壳最易升档</span>
+        <h3>学生学情与帮扶清单（${e(filterLabels[filterMode] || '全班学生')} · ${rows.length} 人）</h3>
+        <span>${sortLabel} · ★连续薄弱科 · 冲X★表示单科卡壳最易升档</span>
       </div>
       <table class="pm-table pm-m10-table${denseCls}">
         <thead><tr>
@@ -410,7 +411,7 @@
     const m = brief.meta;
     const tiers = lp.tiers || [];
     const doc = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
-<title>${e(m.grade)} ${e(m.class)}班 · ${e(item.subject)}分层教学分组单（无分无名次）</title>
+<title>${e(m.grade)} ${e(m.class)}班 · ${e(item.subject)}分层教学分组单</title>
 <style>
   @page { size: A4 portrait; margin: 12mm; }
   * { box-sizing: border-box; }
@@ -439,10 +440,10 @@
   @media print { body { background: #fff; } .print-bar { display: none; } .sheet { width: auto; min-height: 0; margin: 0; padding: 0; box-shadow: none; } }
 </style></head>
 <body>
-  <div class="print-bar"><span>${e(m.grade)} ${e(m.class)}班 · ${e(item.subject)}分层教学分组单（无分无名次）</span><button onclick="window.print()">打印 / 另存为 PDF</button></div>
+  <div class="print-bar"><span>${e(m.grade)} ${e(m.class)}班 · ${e(item.subject)}分层教学分组单</span><button onclick="window.print()">打印 / 另存为 PDF</button></div>
   <div class="sheet">
     <div class="head">
-      <div><div class="brand">融侨学迹 · 科任教师脱敏教学分组单（不含原始分数与具体名次）</div><h1>${e(m.grade)} · ${e(m.class)}班 ${e(item.subject)}四层教学分组</h1></div>
+      <div><div class="brand">融侨学迹 · 学科分层教学分组单</div><h1>${e(m.grade)} · ${e(m.class)}班 ${e(item.subject)}分层教学分组</h1></div>
       <div class="meta"><strong>${e(m.exam_name)}（${e(m.exam_date)}）</strong><br>任课教师：${e(item.teacher || '未录入')} ｜ 班主任：${e(m.homeroom || '未录入')}</div>
     </div>
     <div class="strip">
@@ -451,7 +452,7 @@
       <div class="kpi"><small>待转化率（${e((lp.c_tiers || []).join('+'))}）</small><strong>${pct(item.c_rate)}</strong></div>
       <div class="kpi"><small>各档人数</small><strong style="font-size:12px">${tiers.map(t => `${e(t)}:${n(item.counts?.[t] ?? 0, 0)}`).join(' ')}</strong></div>
     </div>
-    ${item.mismatch_a_count ? `<div class="claim"><strong>优先认领：总评已达 A 档但「${e(item.subject)}」未达 A 档（${item.mismatch_a_count} 人）</strong><div>${(item.mismatch_a_students || []).slice().sort((a, b) => cmpSurname(a.name, b.name)).map(x => `${e(x.name)}（总评${e(x.total_level)} → 本科${e(x.sub_level)}）`).join('、')}</div></div>` : ''}
+    ${item.mismatch_a_count ? `<div class="claim"><strong>认领名单（${item.mismatch_a_count} 人）</strong><div>${(item.mismatch_a_students || []).slice().sort((a, b) => cmpSurname(a.name, b.name)).map(x => `${e(x.name)}（总评${e(x.total_level)} → 本科${e(x.sub_level)}）`).join('、')}</div></div>` : ''}
     <div class="groups">${(item.teaching_groups || []).map(g => {
       const names = (g.names || []).slice().sort(cmpSurname);
       return `<div class="grp">
@@ -460,7 +461,7 @@
       <div class="names">${names.length ? names.map(nm => `<span>${e(nm)}</span>`).join('') : '<em>暂无学生</em>'}</div>
     </div>`;
     }).join('')}</div>
-    <div class="foot">说明：本分组单严格隐去所有学生的原始分数与年级/班级具体名次，组内按姓氏拼音排序，可直接用于课堂分层教学、分层作业与个别辅导。</div>
+    <div class="foot">说明：组内按姓氏拼音排序，可用于课堂分层教学、分层作业与个别辅导。</div>
   </div>
 </body></html>`;
     const win = window.open('', '_blank', 'width=940,height=860');

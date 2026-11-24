@@ -98,6 +98,7 @@
       </div>
       <div class="resume-actions">
         <a id="resume-brief" class="btn primary" href="/leader.html?view=brief">直接看班情分析 →</a>
+        <a id="resume-abc" class="btn secondary" href="/leader.html?view=brief&action=abc">导出各班 ABC 表</a>
         <a id="resume-compare" class="btn secondary" href="/leader.html?view=compare">班级与学科对比</a>
       </div>
     </section>
@@ -158,6 +159,7 @@
         document.getElementById('resume-title').textContent = `${latest.grade} · ${latest.name}`;
         document.getElementById('resume-sub').textContent = `考试日期 ${latest.date} · ${latest.row_count} 条记录 · ${latest.subject_count} 个学科`;
         document.getElementById('resume-brief').href = `/leader.html?exam=${encodeURIComponent(latest.id)}&view=brief`;
+        document.getElementById('resume-abc').href = `/leader.html?exam=${encodeURIComponent(latest.id)}&view=brief&action=abc`;
         document.getElementById('resume-compare').href = `/leader.html?exam=${encodeURIComponent(latest.id)}&view=compare`;
         document.getElementById('resume-bar').hidden = false;
       })

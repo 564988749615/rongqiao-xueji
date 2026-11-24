@@ -23,8 +23,8 @@
     { id: 'M6', name: '历次单科名次段纵向对比', desc: '原模板1：总分与各科历次名次段趋势（可选领导版 50–800 或教师版 200–800）' },
     { id: 'M7', name: '有效分与薄弱科统计矩阵', desc: '原模板2：历次达标集中率 + 本次单科前 100–500 矩阵 + 薄弱学科统计' },
     { id: 'M8', name: '班情会手写纪要与签字栏', desc: '核心定性、整改抓手、包干责任人、下次复盘节点及领导/班主任签字' },
-    { id: 'M9', name: '六层等级分布与学科脱敏协同（无分无名次）', desc: 'A1/A2/B1/B2/C1/C2 分布与跃迁、各科 A档率/待转化率、总评A错配认领' },
-    { id: 'M10', name: '学生无分无名次抓手清单（教师脱敏版）', desc: 'A4 竖版精简 1 页排全班：状态信号、升档临门一脚、拖档薄弱科与优势鼓励科（按姓氏排序）' },
+    { id: 'M9', name: '等级分布与学科协同表', desc: 'A1/A2/B1/B2/C1/C2 分布与跃迁、各科 A档率/待转化率、认领名单' },
+    { id: 'M10', name: '学生学情与帮扶清单（教师版）', desc: 'A4 竖版精简 1 页排全班：状态信号、升档临门一脚、拖档薄弱科与优势鼓励科（按姓氏排序）' },
   ];
 
   const PRESETS = {
@@ -78,8 +78,8 @@
     },
     teacher_safe: {
       id: 'teacher_safe',
-      name: '教师脱敏抓手册（无分无名次）',
-      desc: '零分数零名次 · 按姓氏拼音排序：六层分布 + 学生抓手 + 四层分组',
+      name: '教师学情帮扶册（仅等级）',
+      desc: '仅呈现等级与教学抓手 · 按姓氏拼音排序：等级分布 + 学生帮扶清单 + 分层分组',
       enabled: ['M9', 'M10', 'M8'],
       order: ['M9', 'M10', 'M8', 'M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'M7'],
       m4Filter: 'all',
@@ -416,18 +416,18 @@
       </div>`;
     }).join('');
 
+    const enabledOrderLabels = orderedMods.filter(mod => enabledSet.has(mod.id)).map(mod => mod.id).join(' · ') || '未选';
+    const customOpen = cfg.preset === 'custom' ? ' open' : '';
+
     return `<div class="studio-wrap">
       <div class="drawer-intro">
-        <p>自由勾选需要打印的班情模块并调整顺序，系统自动按 <strong>A4 竖版出版级排版</strong> 拼装，支持单班打印或全年级按班分页套打，自动记住您的定制方案。</p>
+        <p>选好下方场景方案，再选择单班或全年级，点击底部<strong>「生成打印预览」</strong>即可 2 步出稿；如需自由增删或调整模块顺序，展开高级设置即可。</p>
       </div>
 
-      <div class="studio-section-label">一、快捷场景预设（点选后仍可逐项微调）</div>
+      <div class="studio-section-label">一、快捷场景方案（按角色自动匹配排序与脱敏）</div>
       <div class="studio-presets">${presetBtns}</div>
 
-      <div class="studio-section-label">二、勾选并排序要打印的模块（已选 <strong>${enabledSet.size}</strong> / ${MODULES.length} 项）</div>
-      <div class="studio-mod-list">${modRows}</div>
-
-      <div class="studio-section-label">三、打印范围与对比基准</div>
+      <div class="studio-section-label">二、打印范围与对比基准</div>
       <div class="studio-scope-box">
         <label class="field">
           <span>打印范围</span>
@@ -444,11 +444,19 @@
         </label>` : ''}
       </div>
 
+      <details class="studio-custom-details"${customOpen}>
+        <summary>
+          <span>自定义增删与排序模块（已选 <strong>${enabledSet.size}</strong> / ${MODULES.length} 项：${e(enabledOrderLabels)}）</span>
+          <small>点击展开微调 ▾</small>
+        </summary>
+        <div class="studio-mod-list">${modRows}</div>
+      </details>
+
       <div id="studio-error" class="error" hidden></div>
       <div class="rules-footer-bar">
         <div class="rules-footer-left">
-          <button type="button" class="btn quiet small" data-action="studio-select-all">全选</button>
-          <button type="button" class="btn quiet small" data-action="studio-preset" data-preset="full">恢复完整默认</button>
+          <button type="button" class="btn quiet small" data-action="studio-select-all">全选模块</button>
+          <button type="button" class="btn quiet small" data-action="studio-preset" data-preset="full">恢复默认</button>
         </div>
         <div class="rules-footer-right">
           <button type="button" class="btn secondary" data-action="close-drawer">取消</button>
@@ -752,8 +760,8 @@
     return `<article class="pm-class-packet">
       <header class="pm-masthead">
         <div>
-          <div class="pm-brand"><i></i>${isPureDesensitized ? '融侨学迹 · 教师脱敏抓手册（不含原始分数与具体名次）' : '融侨学迹 · 班情分析定制打印册'}</div>
-          <h1>${e(m.grade)} · ${e(m.class)}班 ${isPureDesensitized ? '班情脱敏抓手报告' : '班情分析报告'}</h1>
+          <div class="pm-brand"><i></i>${isPureDesensitized ? '融侨学迹 · 教师学情分析册' : '融侨学迹 · 班情分析定制打印册'}</div>
+          <h1>${e(m.grade)} · ${e(m.class)}班 ${isPureDesensitized ? '班情与教学帮扶报告' : '班情分析报告'}</h1>
         </div>
         <div class="pm-meta-right">
           <strong>${e(m.exam_name)}（${e(m.exam_date)}）</strong>

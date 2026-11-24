@@ -400,6 +400,90 @@ class PMUpgradesTest(unittest.TestCase):
                     _walk_keys(it)
         _walk_keys(lp)
 
+    def test_class_abc_export_surname_sorted_and_desensitized(self):
+        """Per-class ABC/A1-C2 Excel & ZIP exports sort by Chinese surname Pinyin with zero scores/ranks."""
+        from distribution import surname_sort_key
+
+        # Verify polyphonic surname ordering
+        poly_names = ['张伟', '解敏', '单鹏', '陈佳', '仇磊', '白雪', '曾俊']
+        sorted_poly = sorted(poly_names, key=surname_sort_key)
+        self.assertEqual(sorted_poly[0], '白雪')
+        self.assertEqual(sorted_poly[1], '陈佳')
+        self.assertLess(sorted_poly.index('仇磊'), sorted_poly.index('单鹏'))
+        self.assertLess(sorted_poly.index('单鹏'), sorted_poly.index('解敏'))
+        self.assertLess(sorted_poly.index('解敏'), sorted_poly.index('曾俊'))
+        self.assertLess(sorted_poly.index('曾俊'), sorted_poly.index('张伟'))
+
+        # Seed exam via multi-import
+        content = base64.b64encode(_make_multi_xlsx()).decode('ascii')
+        inspected = self._post('/api/workbook/inspect', {
+            'filename': '总表.xlsx',
+            'content': content,
+            'grade': '初三',
+            'default_date': '2026-10-01',
+        })
+        s1 = inspected['score_sheets'][0]
+        commit_res = self._post('/api/exams/batch-import', {
+            'grade': '初三',
+            'exams': [{
+                'dataset': s1['dataset'],
+                'name': s1['exam_name'],
+                'date': s1['exam_date'],
+                'mode': 'create',
+            }],
+            'teacher_sheets': [{'parsed': inspected['teacher_sheets'][0]['parsed']}],
+        })
+        exam_id = commit_res['exam_ids'][0]
+
+        # 1. Full multi-sheet workbook (mode=six)
+        xlsx_six, _ = self._get(f'/api/exams/{exam_id}/class-abc.xlsx?mode=six')
+        wb_six = openpyxl.load_workbook(io.BytesIO(xlsx_six))
+        self.assertEqual(wb_six.sheetnames, ['01班', '02班'])
+        ws01 = wb_six['01班']
+        headers = [ws01.cell(4, c).value for c in range(1, ws01.max_column + 1)]
+        self.assertEqual(headers[:3], ['序号', '姓名', '总评'])
+        self.assertEqual(headers[3:], ['语文', '数学', '英语'])
+        # 01班 students: 张锋, 李明, 王磊 -> Pinyin surname order: 李明 (L), 王磊 (W), 张锋 (Z)
+        names01 = [ws01.cell(r, 2).value for r in range(5, 8)]
+        self.assertEqual(names01, ['李明', '王磊', '张锋'])
+        # Ensure ZERO raw score numbers appear in student rows
+        valid_six = {'A1', 'A2', 'B1', 'B2', 'C1', 'C2', '—'}
+        for r in range(5, 8):
+            for c in range(3, len(headers) + 1):
+                val = ws01.cell(r, c).value
+                self.assertIn(val, valid_six, f'Unexpected non-level value {val!r} at R{r}C{c}')
+        # Ensure bottom summary row includes A档占比
+        summary_labels = [ws01.cell(r, 2).value for r in range(8, ws01.max_row + 1)]
+        self.assertIn('A档占比', summary_labels)
+
+        # 2. Single-class workbook (mode=abc)
+        xlsx_abc, _ = self._get(f'/api/exams/{exam_id}/class-abc.xlsx?mode=abc&class=01')
+        wb_abc = openpyxl.load_workbook(io.BytesIO(xlsx_abc))
+        self.assertEqual(wb_abc.sheetnames, ['01班'])
+        ws_abc = wb_abc['01班']
+        valid_abc = {'A', 'B', 'C', '—'}
+        for r in range(5, 8):
+            for c in range(3, ws_abc.max_column + 1):
+                self.assertIn(ws_abc.cell(r, c).value, valid_abc)
+
+        # 3. Per-class isolated ZIP (mode=six)
+        zip_bytes, _ = self._get(f'/api/exams/{exam_id}/class-abc.zip?mode=six')
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+            znames = set(zf.namelist())
+            self.assertIn('使用说明.txt', znames)
+            self.assertIn('01班_A1-C2等级表(按姓氏).xlsx', znames)
+            self.assertIn('02班_A1-C2等级表(按姓氏).xlsx', znames)
+            wb_c2 = openpyxl.load_workbook(io.BytesIO(zf.read('02班_A1-C2等级表(按姓氏).xlsx')))
+            self.assertEqual(wb_c2.sheetnames, ['02班'])
+            c2_names = [wb_c2['02班'].cell(r, 2).value for r in range(5, 7)]
+            self.assertNotIn('张锋', c2_names)
+            self.assertNotIn('李明', c2_names)
+
+        # 4. Headteacher class-packages.zip also bundles the surname-sorted ABC sheet
+        pkg_bytes, _ = self._get(f'/api/exams/{exam_id}/class-packages.zip')
+        with zipfile.ZipFile(io.BytesIO(pkg_bytes)) as zf:
+            self.assertIn('01班/01班_ABC等级表(按姓氏).xlsx', zf.namelist())
+
 
 if __name__ == '__main__':
     unittest.main()

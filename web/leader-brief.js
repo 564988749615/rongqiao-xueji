@@ -441,53 +441,14 @@
 
     const highChoices = [...new Set([10, 15, 20, 25, 30, Number((m.high_ratio * 100).toFixed(1))])].sort((a, b) => a - b);
     const mainChoices = [...new Set([30, 35, 40, 45, 50, 60, Number((m.main_ratio * 100).toFixed(1))])].sort((a, b) => a - b);
-    const roundingLabel = m.cutoff_rounding === 'round' ? '四舍五入' : m.cutoff_rounding === 'ceil' ? '向上取整' : '向下取整';
-    const tieLabel = m.tie_mode === 'dense' ? '不跳号(1,1,2)' : '跳号(1,1,3)';
     const clsIdx = m.classes.indexOf(m.class);
     const hasPrevCls = clsIdx > 0;
     const hasNextCls = clsIdx >= 0 && clsIdx < m.classes.length - 1;
+    const section = state.briefSection || 'overview';
+    const compCount = (brief.student_comparison?.rows || []).length;
+    const slideCount = brief.level_profile?.counts?.slide || 0;
 
-    return `
-      <section class="panel brief-control-panel">
-        <div class="brief-bar">
-          <div class="class-stepper" role="group" aria-label="逐班切换">
-            <button type="button" data-action="brief-prev-class" title="上一班" aria-label="上一班"${hasPrevCls ? '' : ' disabled'}>‹</button>
-            <select id="brief-class" aria-label="选择班情分析班级">${m.classes.map(c => option(c, `${c}班`, m.class)).join('')}</select>
-            <button type="button" data-action="brief-next-class" title="下一班" aria-label="下一班"${hasNextCls ? '' : ' disabled'}>›</button>
-          </div>
-          <div class="brief-ratio-group">
-            <span>尖优</span>
-            <select id="brief-high-ratio" aria-label="尖优线比例">${highChoices.map(v => option(Number((v / 100).toFixed(4)), `前 ${v}%`, Number(m.high_ratio.toFixed(4)))).join('')}</select>
-            <span>达标</span>
-            <select id="brief-main-ratio" aria-label="达标线比例">${mainChoices.map(v => option(Number((v / 100).toFixed(4)), `前 ${v}%`, Number(m.main_ratio.toFixed(4)))).join('')}</select>
-            ${state.briefRatioOverride ? '<button type="button" class="text-button" data-action="save-brief-ratios" title="将当前试算双线写入本场口径">存为口径</button>' : ''}
-          </div>
-          <div class="brief-actions">
-            ${btn('任课教师', 'open-teachers', '', 'secondary small')}
-            <details class="print-menu">
-              <summary class="btn secondary small">更多打印模板 ▾</summary>
-              <div class="print-menu-list">
-                <button type="button" data-action="open-print-studio"><strong>分模块组合打印台…（推荐）</strong><small>自由勾选 8 大模块与排序，含全班较上次对比</small></button>
-                <div class="print-menu-divider"></div>
-                <button type="button" data-action="print-tpl1-leader"><strong>打印模板1 · 领导版</strong><small>A4 纵向 · 展示历次前 50–800 名</small></button>
-                <button type="button" data-action="print-tpl1-teacher"><strong>打印模板1 · 教师版</strong><small>A4 纵向 · 展示历次前 200–800 名</small></button>
-                <button type="button" data-action="print-tpl2"><strong>打印模板2 · 有效分与薄弱科</strong><small>A4 横向 · 达标集中 + 单科矩阵 + 薄弱科</small></button>
-                <div class="print-menu-divider"></div>
-                <button type="button" data-action="open-batch-print"><strong>批量打印全年级…</strong><small>一键生成全年级 ${m.classes.length} 个班自动分页稿</small></button>
-                <button type="button" data-action="open-student-cards" data-class="${e(m.class)}"><strong>学生个人诊断卡（发家长/学生）…</strong><small>零他人隐私 · 雷达图 + 百分位 + 提分抓手</small></button>
-                <button type="button" data-action="download-class-zip"><strong>一键按班拆包导出 ZIP（发班主任）</strong><small>每班独立文件夹 · 本班明细 Excel + 打印版</small></button>
-              </div>
-            </details>
-            ${btn('分模块打印', 'open-print-studio', '', 'secondary small')}
-            ${btn('打印 · 领导谈话卡', 'print-brief-card', '', 'primary small')}
-          </div>
-        </div>
-        <div class="brief-rules-pill">
-          <span>当前口径：${roundingLabel} · 并列${tieLabel} · 临界 ±${n(m.borderline_band, 0)} 名 · 显著进退 ≥${n(m.shift_threshold, 0)} 名 · 预警 ${n(m.warn_gap_pct ?? 5, 1)}%${m.mentor_range ? ` · 导师制 ${m.mentor_range[0]}-${m.mentor_range[1]} 名` : ''}</span>
-          ${state.briefRatioOverride ? '<span class="badge warning">当前为临时双线试算</span>' : ''}
-        </div>
-      </section>
-
+    const overviewHTML = `
       <section class="panel brief-hero">
         <div class="section-title brief-hero-head">
           <div>
@@ -547,7 +508,9 @@
           ${flowHTML}
         </section>
       </div>
+    `;
 
+    const studentsHTML = `
       <section class="panel">
         <div class="section-title">
           <div><h2>现场点名与包干微名单</h2><p>直接定位最易提分的单科跛脚生、老优生失血预警与顽固偏科生</p></div>
@@ -555,14 +518,15 @@
         </div>
         ${renderActionListsHTML(brief, state.briefListTab || 'high')}
       </section>
-
-      ${window.LeaderLevels ? window.LeaderLevels.renderLevelsSectionHTML(brief, state) : ''}
-
       ${window.LeaderPrintStudio ? window.LeaderPrintStudio.renderComparisonSectionHTML(brief, state) : ''}
+    `;
 
+    const levelsHTML = window.LeaderLevels ? window.LeaderLevels.renderLevelsSectionHTML(brief, state) : '';
+
+    const templatesHTML = `
       <section class="panel">
         <div class="section-title">
-          <div><h2>打印模板在线预览（领导版 / 教师版 / 有效分薄弱科）</h2><p>与学校原有打印习惯一致，支持自动汇总历次考试并分版打印</p></div>
+          <div><h2>传统打印模板在线预览</h2><p>与学校原有打印习惯一致，支持自动汇总历次考试并分版打印</p></div>
           <div class="toolbar-inline">
             ${tplMode === 'tpl2' ? `<label class="small-text">模板2有效分口径 <select id="brief-tpl2-ratio">${option('main', `前${mPct}%`, tpl2Ratio)}${option('high', `前${hPct}%`, tpl2Ratio)}${option('mid30', '前30%（兼容旧表）', tpl2Ratio)}</select></label>` : ''}
             ${btn('打印此预览模板', tplMode === 'tpl1-leader' ? 'print-tpl1-leader' : tplMode === 'tpl1-teacher' ? 'print-tpl1-teacher' : 'print-tpl2', '', 'primary small')}
@@ -575,6 +539,57 @@
         </div>
         <div class="tpl-preview-box">${tplPreview}</div>
       </section>
+    `;
+
+    const activeBody = section === 'students'
+      ? studentsHTML
+      : section === 'levels'
+        ? levelsHTML
+        : section === 'templates'
+          ? templatesHTML
+          : overviewHTML;
+
+    return `
+      <section class="panel brief-control-panel">
+        <div class="brief-bar">
+          <div class="class-stepper" role="group" aria-label="逐班切换">
+            <button type="button" data-action="brief-prev-class" title="上一班" aria-label="上一班"${hasPrevCls ? '' : ' disabled'}>‹</button>
+            <select id="brief-class" aria-label="选择班情分析班级">${m.classes.map(c => option(c, `${c}班`, m.class)).join('')}</select>
+            <button type="button" data-action="brief-next-class" title="下一班" aria-label="下一班"${hasNextCls ? '' : ' disabled'}>›</button>
+          </div>
+          <div class="brief-ratio-group">
+            <span>尖优</span>
+            <select id="brief-high-ratio" aria-label="尖优线比例">${highChoices.map(v => option(Number((v / 100).toFixed(4)), `前 ${v}%`, Number(m.high_ratio.toFixed(4)))).join('')}</select>
+            <span>达标</span>
+            <select id="brief-main-ratio" aria-label="达标线比例">${mainChoices.map(v => option(Number((v / 100).toFixed(4)), `前 ${v}%`, Number(m.main_ratio.toFixed(4)))).join('')}</select>
+            ${state.briefRatioOverride ? '<button type="button" class="text-button" data-action="save-brief-ratios" title="将当前试算双线写入本场口径">存为口径</button>' : ''}
+          </div>
+          <div class="brief-actions">
+            ${btn('导出 ABC 表', 'open-abc-export', '', 'secondary small')}
+            ${btn('分模块打印', 'open-print-studio', '', 'primary small')}
+            <details class="print-menu">
+              <summary class="btn quiet small">更多 ▾</summary>
+              <div class="print-menu-list">
+                <button type="button" data-action="print-brief-card"><strong>打印 · 领导谈话卡（1 页横向）</strong><small>20%/40% 双线定调 + 谈话要点 + 包干名单</small></button>
+                <button type="button" data-action="open-batch-print"><strong>批量打印全年级…</strong><small>一键生成全年级 ${m.classes.length} 个班自动分页稿</small></button>
+                <div class="print-menu-divider"></div>
+                <button type="button" data-action="open-student-cards" data-class="${e(m.class)}"><strong>学生个人诊断卡（发家长/学生）…</strong><small>零他人隐私 · 雷达图 + 百分位 + 提分抓手</small></button>
+                <button type="button" data-action="download-class-zip"><strong>一键按班拆包导出 ZIP（发班主任）</strong><small>每班独立文件夹 · 成绩明细 + ABC 表 + 打印版</small></button>
+                <div class="print-menu-divider"></div>
+                <button type="button" data-action="open-teachers"><strong>任课教师配置与导入…</strong><small>配置班主任与各科教师，支持同师多班对照</small></button>
+              </div>
+            </details>
+          </div>
+        </div>
+        <div class="brief-subnav" role="tablist" aria-label="班情分析视图切换">
+          <button type="button" role="tab" aria-selected="${section === 'overview'}" data-action="brief-section" data-section="overview" class="${section === 'overview' ? 'active' : ''}">班情总览</button>
+          <button type="button" role="tab" aria-selected="${section === 'students'}" data-action="brief-section" data-section="students" class="${section === 'students' ? 'active' : ''}">学生对比与名单<em>${compCount}</em></button>
+          <button type="button" role="tab" aria-selected="${section === 'levels'}" data-action="brief-section" data-section="levels" class="${section === 'levels' ? 'active' : ''}">等级与 ABC${slideCount ? `<em class="is-warn">预警 ${slideCount}</em>` : ''}</button>
+          <button type="button" role="tab" aria-selected="${section === 'templates'}" data-action="brief-section" data-section="templates" class="${section === 'templates' ? 'active' : ''}">传统打印预览</button>
+        </div>
+        ${state.briefRatioOverride ? '<div class="brief-rules-pill"><span class="badge warning">当前为临时双线试算</span><button type="button" class="text-button" data-action="save-brief-ratios">点击保存为本场口径</button></div>' : ''}
+      </section>
+      ${activeBody}
     `;
   }
 
@@ -625,11 +640,65 @@
     `;
   }
 
+  function abcExportDrawerHTML(analysis, currentClass = '', mode = 'six') {
+    const classes = analysis?.classes || [];
+    const subjects = analysis?.subjects || [];
+    const isAbc = mode === 'abc';
+    const cls = currentClass && classes.includes(currentClass) ? currentClass : (classes[0] || '');
+    const sampleLevels = isAbc ? ['A', 'A', 'B', 'A', 'C'] : ['A1', 'A2', 'B1', 'A2', 'C1'];
+    const previewSubs = subjects.slice(0, 4);
+    const moreTag = subjects.length > 4 ? ` …等 ${subjects.length} 科` : '';
+
+    return `
+      <div class="drawer-intro">
+        <p>导出纯脱敏的各班学生等级表：<strong>按学生姓氏拼音（A–Z）排序</strong>，不含任何原始分数与名次，并自动排版为 <strong>A4 竖版一页纸</strong>（含底部等级人数与 A 档占比汇总）。</p>
+      </div>
+
+      <div class="studio-section-label">一、选择等级形式</div>
+      <div class="abc-mode-grid">
+        <button type="button" class="studio-preset-card${!isAbc ? ' active' : ''}" data-action="abc-mode" data-mode="six">
+          <strong>六级（A1 / A2 / B1 / B2 / C1 / C2）</strong>
+          <span>细分高低档位，便于精准识别升档临界生</span>
+        </button>
+        <button type="button" class="studio-preset-card${isAbc ? ' active' : ''}" data-action="abc-mode" data-mode="abc">
+          <strong>三级（A / B / C）</strong>
+          <span>最简洁的三档结构，一眼看清学科整体表现</span>
+        </button>
+      </div>
+
+      <div class="abc-preview-strip">
+        <small>表头与内容示例（按姓氏排序 · 零分零名次）</small>
+        <div class="abc-preview-cols">
+          <span>序号</span><span>姓名</span><span>总评 <b>${sampleLevels[0]}</b></span>
+          ${previewSubs.map((s, i) => `<span>${e(s)} <b>${sampleLevels[(i + 1) % sampleLevels.length]}</b></span>`).join('')}
+          ${moreTag ? `<span class="is-muted">${e(moreTag)}</span>` : ''}
+        </div>
+      </div>
+
+      <div class="studio-section-label">二、选择导出方式（点击即下载）</div>
+      <div class="batch-print-grid">
+        <button type="button" class="batch-print-card is-featured" data-action="download-abc-xlsx">
+          <strong>全年级总簿 Excel（.xlsx · 每班一个工作表）</strong>
+          <span>包含全部 ${classes.length} 个班（${e(classes.slice(0, 4).map(c => c + '班').join('、'))}${classes.length > 4 ? '…' : ''}），一个文件方便统一留档或直接整本打印</span>
+        </button>
+        <button type="button" class="batch-print-card" data-action="download-abc-zip">
+          <strong>按班独立文件包 ZIP（每班一个独立 .xlsx）</strong>
+          <span>全年级 ${classes.length} 个班拆成独立文件，不含其他班级学生，可直接点对点微信发给各位班主任 / 科任老师</span>
+        </button>
+        ${cls ? `<button type="button" class="batch-print-card" data-action="download-abc-class" data-class="${e(cls)}">
+          <strong>仅导出当前班（${e(cls)}班 .xlsx）</strong>
+          <span>快速下载 ${e(cls)}班单班等级表（按姓氏拼音排序 · 1 页 A4）</span>
+        </button>` : ''}
+      </div>
+    `;
+  }
+
   window.LeaderBrief = {
     renderBriefView,
     actionListTable,
     printBriefs,
     teachersDrawerHTML,
     batchPrintDrawerHTML,
+    abcExportDrawerHTML,
   };
 })();

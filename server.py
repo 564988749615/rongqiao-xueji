@@ -26,7 +26,12 @@ MAX_REQUEST = 32 * 1024 * 1024
 sys.path.insert(0, str(ROOT / '.runtime'))
 
 from class_brief import build_class_brief
-from distribution import build_class_packages_zip, build_student_cards
+from distribution import (
+    build_class_abc_workbook,
+    build_class_abc_zip,
+    build_class_packages_zip,
+    build_student_cards,
+)
 from engine import (
     PORTABLE_RULE_KEYS,
     analyze,
@@ -787,6 +792,26 @@ class Handler(BaseHTTPRequestHandler):
                 grade_exams, exam_id, high_ratio=high_ratio, main_ratio=main_ratio
             )
             return self.send(zip_bytes, mime='application/zip', filename=filename)
+        match = re.fullmatch(r'/api/exams/([^/]+)/class-abc\.(xlsx|zip)', path)
+        if match:
+            exam_id, ext = match.groups()
+            target_row = get_exam(exam_id)
+            analysis = exam_analysis(target_row, include_tables=False)
+            mode = (query.get('mode') or ['six'])[0]
+            class_name = (query.get('class') or [''])[0].strip()
+            with db() as conn:
+                tmap = get_teachers_map(conn, exam_id)
+            if ext == 'zip':
+                filename, content_bytes = build_class_abc_zip(analysis, mode=mode, teachers_map=tmap)
+                return self.send(content_bytes, mime='application/zip', filename=filename)
+            filename, content_bytes = build_class_abc_workbook(
+                analysis, mode=mode, class_name=class_name, teachers_map=tmap
+            )
+            return self.send(
+                content_bytes,
+                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                filename=filename,
+            )
         match = re.fullmatch(r'/api/exams/([^/]+)', path)
         if match:
             row = get_exam(match.group(1))
