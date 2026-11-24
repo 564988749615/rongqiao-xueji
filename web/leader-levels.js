@@ -64,11 +64,9 @@
     const base = lp.transitions?.compare_exam;
     return {
       title: `${brief.meta.class}班 · 学生无分无名次抓手清单（教师脱敏版）`,
-      columns: ['姓名', '当前档位', '较上次跃迁', '状态信号', '升档临门一脚', '拖档 / 薄弱科（★连弱）', '优势鼓励科', '波动主因'],
+      columns: ['姓名', '状态信号', '升档临门一脚', '拖档 / 薄弱科（★连弱）', '优势鼓励科', '波动主因'],
       rows: rows.map(r => [
         r.name,
-        r.level,
-        r.transition_text || '—',
         r.status_label || '—',
         formatPushText(r.push_target),
         formatDragText(r.drag_subjects),
@@ -171,15 +169,13 @@
         : '<span class="muted">—</span>';
       return `<tr>
         <td><strong>${e(r.name)}</strong></td>
-        <td><span class="lvl-badge ${tierTone(r.level, tiers)}">${e(r.level)}</span></td>
-        <td>${e(r.transition_text || '—')}</td>
         <td><span class="lvl-status-pill ${statusCls}">${e(r.status_label)}</span></td>
         <td>${pushHtml}</td>
         <td>${dragHtml}</td>
         <td>${strHtml}</td>
         <td class="small-text">${e(r.driver_text || '—')}</td>
       </tr>`;
-    }).join('') : '<tr><td colspan="8" class="muted" style="text-align:center">当前筛选下没有学生记录。</td></tr>';
+    }).join('') : '<tr><td colspan="6" class="muted" style="text-align:center">当前筛选下没有学生记录。</td></tr>';
 
     return `<div class="toolbar" style="margin-bottom:10px">
       <div class="tab-strip compact-tabs" style="margin:0">${pills.map(([id, label]) =>
@@ -192,7 +188,7 @@
     </div>
     <div class="table-wrap comp-table-wrap"><table>
       <thead><tr>
-        <th>姓名</th><th>档位</th><th>较上次跃迁</th><th>状态信号</th>
+        <th>姓名</th><th>状态信号</th>
         <th>升档临门一脚</th><th>拖档 / 薄弱科（★连弱）</th><th>优势鼓励科</th><th>波动主因</th>
       </tr></thead>
       <tbody>${trs}</tbody>
@@ -322,13 +318,6 @@
     </section>`;
   }
 
-  function formatCompactTransition(r) {
-    if (r.level_step === null || r.level_step === undefined) return '—';
-    if (r.level_step === 0) return '守档';
-    const arrow = r.level_step > 0 ? `↑${r.level_step}` : `↓${Math.abs(r.level_step)}`;
-    return `${r.prev_level}→${r.level} ${arrow}`;
-  }
-
   function formatCompactStatus(code) {
     if (code === 'surge') return '▲ 显著跃升';
     if (code === 'rise') return '↗ 稳步上行';
@@ -367,18 +356,15 @@
     const trs = rows.map((r, i) => {
       const rowCls = r.status_code === 'slide' ? 'row-alert' : r.status_code === 'surge' ? 'row-good' : '';
       const stCls = r.status_code === 'slide' ? 'g-dn is-bold' : r.status_code === 'dip' ? 'g-dn' : (r.status_code === 'surge' || r.status_code === 'rise') ? 'g-up' : '';
-      const trCls = r.level_step > 0 ? 'g-up' : r.level_step < 0 ? 'g-dn' : '';
       return `<tr class="${rowCls}">
         <td class="num">${i + 1}</td>
         <td><b>${e(r.name)}</b></td>
-        <td class="c"><b>${e(r.level)}</b></td>
-        <td class="nw ${trCls}">${e(formatCompactTransition(r))}</td>
         <td class="nw ${stCls}">${e(formatCompactStatus(r.status_code))}</td>
         <td class="nw">${e(formatCompactPush(r.push_target))}</td>
         <td class="nw">${e(formatCompactDrag(r.drag_subjects))}</td>
         <td class="nw">${e(formatCompactStrength(r.strength_subjects))}</td>
       </tr>`;
-    }).join('') || '<tr><td colspan="8" class="c">当前筛选范围内没有学生记录。</td></tr>';
+    }).join('') || '<tr><td colspan="6" class="c">当前筛选范围内没有学生记录。</td></tr>';
 
     let groupsBlock = '';
     if (cfg.m10IncludeGroups) {
@@ -405,14 +391,12 @@
       </div>
       <table class="pm-table pm-m10-table${denseCls}">
         <thead><tr>
-          <th class="num" style="width:20px">序</th>
-          <th style="width:42px">姓名</th>
-          <th class="c" style="width:24px">档</th>
-          <th style="width:62px">较上次跃迁</th>
-          <th style="width:60px">状态信号</th>
-          <th style="width:88px">升档临门一脚</th>
+          <th class="num" style="width:22px">序</th>
+          <th style="width:48px">姓名</th>
+          <th style="width:74px">状态信号</th>
+          <th style="width:112px">升档临门一脚</th>
           <th>拖档 / 薄弱科（★连弱）</th>
-          <th style="width:82px">优势鼓励科</th>
+          <th style="width:100px">优势鼓励科</th>
         </tr></thead>
         <tbody>${trs}</tbody>
       </table>
