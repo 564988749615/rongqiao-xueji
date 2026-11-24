@@ -1,46 +1,54 @@
-/* 融侨学迹 · 共享设计变量与基础组件（全站单一数据源） */
+/* 融侨学迹 · 共享设计变量与基础组件（全站单一数据源 · 85:10:5 精密桌面体系） */
 :root {
-  /* 表面层 */
-  --bg: #f5f6fa;
+  /* 表面层（85% 极净冷白画布与 1px 细线骨架） */
+  --bg: #ffffff;
   --surface: #ffffff;
-  --surface-subtle: #f8f8fc;
-  --surface-tint: #f1ecfa;
-  --sidebar: #fbfafe;
+  --surface-subtle: #f6f6f9;
+  --surface-tint: #f3f2fb;
+  --sidebar: #f8f8fa;
+
+  /* 单一重色锚点与哑光炭灰控件（10%） */
+  --anchor: #2f3068;
+  --anchor-dark: #232452;
+  --control-dark: #23263a;
+  --control-dark-hover: #171928;
 
   /* 文字层（均满足 WCAG AA） */
-  --ink: #1e1b2e;
-  --ink-secondary: #4c4660;
-  --muted: #69627e;
+  --ink: #181a26;
+  --ink-secondary: #494d60;
+  --muted: #5d6176;
 
-  /* 边框与分割线 */
-  --line: #e4e1ee;
-  --line-strong: #ccc6dd;
+  /* 1px 极细分割线与控件边界 */
+  --line: #eaeaf0;
+  --line-strong: #d4d6e2;
 
-  /* 品牌紫藤色（锁定品牌资产） */
+  /* 品牌紫藤与单点数据高亮（5%） */
   --primary: #6f4eb8;
   --primary-dark: #573a9b;
-  --primary-soft: #ede7f9;
+  --primary-soft: #f0edfa;
   --primary-ring: rgba(111, 78, 184, 0.22);
+  --signal: #6d68dc;
+  --signal-soft: #eeedfc;
 
-  /* 数据与状态语义色 */
-  --good: #1f7a5a;
-  --good-bg: #ecf7f2;
-  --good-border: #c5e5d8;
+  /* 数据与状态语义色（克制降噪，仅作信号点与关键标注） */
+  --good: #1d7456;
+  --good-bg: #eef7f3;
+  --good-border: #c9e6d9;
   --warn: #9a5b13;
-  --warn-bg: #fef6e8;
-  --warn-border: #f2d8ac;
+  --warn-bg: #fdf6ea;
+  --warn-border: #f0d7ae;
   --danger: #b4324e;
-  --danger-bg: #fdf0f3;
-  --danger-border: #f0c4ce;
+  --danger-bg: #fcf0f3;
+  --danger-border: #efc5cf;
 
   /* 3 档圆角 */
   --r-sm: 6px;
   --r-md: 10px;
   --r-lg: 14px;
 
-  /* 2 档阴影 */
-  --shadow-sm: 0 1px 2px rgba(26, 20, 44, 0.05);
-  --shadow-lg: 0 18px 48px rgba(26, 20, 44, 0.14);
+  /* 2 档极轻阴影（浮层专用，画布内不靠阴影堆层次） */
+  --shadow-sm: 0 1px 2px rgba(24, 26, 38, 0.04);
+  --shadow-lg: 0 18px 48px rgba(24, 26, 38, 0.12);
 
   /* 动效 */
   --ease: cubic-bezier(0.2, 0, 0, 1);
@@ -60,6 +68,7 @@
 }
 
 *, *::before, *::after { box-sizing: border-box; }
+::placeholder { color: #5f6378; opacity: 1; }
 body {
   margin: 0;
   background: var(--bg);
@@ -112,17 +121,17 @@ small { font-size: 12px; }
   white-space: nowrap;
   transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease);
 }
-.btn:hover:not(:disabled) { border-color: var(--primary); background: var(--surface-tint); color: var(--primary-dark); }
+.btn:hover:not(:disabled) { border-color: var(--control-dark); background: var(--surface-subtle); color: var(--ink); }
 .btn:active:not(:disabled) { transform: translateY(0.5px); }
 .btn.primary, .primary.btn {
-  background: var(--primary);
-  border-color: var(--primary);
+  background: var(--control-dark);
+  border-color: var(--control-dark);
   color: #ffffff;
 }
-.btn.primary:hover:not(:disabled) { background: var(--primary-dark); border-color: var(--primary-dark); color: #ffffff; }
+.btn.primary:hover:not(:disabled) { background: var(--control-dark-hover); border-color: var(--control-dark-hover); color: #ffffff; }
 .btn.secondary { background: var(--surface); color: var(--ink-secondary); }
 .btn.quiet { background: transparent; border-color: transparent; color: var(--ink-secondary); }
-.btn.quiet:hover:not(:disabled) { background: var(--surface-tint); border-color: transparent; color: var(--primary-dark); }
+.btn.quiet:hover:not(:disabled) { background: var(--surface-subtle); border-color: transparent; color: var(--ink); }
 .btn.small { font-size: 12px; padding: 5px 10px; min-height: 30px; }
 .btn.danger { color: var(--danger); border-color: var(--danger-border); }
 .btn.danger:hover:not(:disabled) { background: var(--danger-bg); border-color: var(--danger); color: var(--danger); }
@@ -132,22 +141,21 @@ small { font-size: 12px; }
   border: 0;
   padding: 4px 6px;
   border-radius: var(--r-sm);
-  color: var(--primary);
+  color: var(--anchor);
   font-size: 13px;
   font-weight: 550;
   white-space: nowrap;
   transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
 }
-.text-button:hover:not(:disabled) { background: var(--primary-soft); color: var(--primary-dark); }
+.text-button:hover:not(:disabled) { background: var(--signal-soft); color: var(--primary-dark); }
 .text-button.danger { color: var(--danger); }
 .text-button.danger:hover:not(:disabled) { background: var(--danger-bg); color: var(--danger); }
 
-/* 面板与表单 */
+/* 面板与表单（无套娃：默认透明轻边界，靠留白与 1px 细线组织） */
 .panel {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--r-md);
-  box-shadow: var(--shadow-sm);
 }
 .field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .field label, .field-label { font-size: 13px; font-weight: 600; color: var(--ink-secondary); }
@@ -173,17 +181,17 @@ input[type=number] { font-variant-numeric: tabular-nums; }
 .field textarea { resize: vertical; min-height: 96px; line-height: 1.65; }
 .field small { color: var(--muted); }
 
-/* 状态徽章 */
+/* 状态徽章（克制降噪，不抢数据视线） */
 .badge {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   padding: 2px 8px;
-  background: var(--primary-soft);
-  color: var(--primary-dark);
+  background: var(--surface-subtle);
+  color: var(--ink-secondary);
   font-size: 12px;
   font-weight: 550;
-  border-radius: var(--r-sm);
+  border-radius: 999px;
   line-height: 1.4;
   white-space: nowrap;
 }
@@ -191,12 +199,12 @@ input[type=number] { font-variant-numeric: tabular-nums; }
 .badge.success { background: var(--good-bg); color: var(--good); }
 .badge.danger { background: var(--danger-bg); color: var(--danger); }
 
-/* 表格 */
+/* 表格（1px 细线行分隔，无多余套框） */
 .table-wrap {
   max-width: 100%;
   overflow-x: auto;
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
   background: var(--surface);
 }
 table {
@@ -215,9 +223,9 @@ th {
   border-bottom: 1px solid var(--line);
 }
 th, td { padding: 10px 12px; border-bottom: 1px solid var(--line); color: var(--ink); }
-tbody tr:nth-child(even) td { background: #fcfcfd; }
+tbody tr:nth-child(even) td { background: transparent; }
 tbody tr:last-child td { border-bottom: 0; }
-tbody tr:hover td { background: var(--surface-tint); }
+tbody tr:hover td { background: var(--surface-subtle); }
 td.numeric, th.numeric, td.number, th.number { text-align: right; }
 th[scope=col] { position: sticky; top: 0; z-index: 1; }
 

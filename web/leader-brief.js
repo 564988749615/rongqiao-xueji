@@ -411,29 +411,110 @@
     return openPrintWindow(`${first.meta.grade} ${scope} 有效分与单科薄弱汇总`, list.map(b => template2HTML(b, ratioMode)), true);
   }
 
+  const fix = (v, d = 1) => (v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) ? '—' : Number(v).toFixed(d));
+
+  function buildClassQueueHTML(brief, state) {
+    const m = brief.meta, h = brief.headline;
+    const ana = state.analysis;
+    const cutoffMain = h.main?.cutoff;
+    const gradeMean = h.grade_mean;
+    const targetPct = Math.round((m.main_ratio || 0.4) * 100);
+    const studentsByClass = new Map();
+    if (ana?.students) {
+      ana.students.forEach(s => {
+        if (s.rank == null) return;
+        const arr = studentsByClass.get(s.class) || [];
+        arr.push(s);
+        studentsByClass.set(s.class, arr);
+      });
+    }
+    const statMap = new Map((ana?.class_stats || []).map(c => [c.class, c]));
+    const items = (m.classes || []).map(cls => {
+      const stus = studentsByClass.get(cls) || [];
+      const cs = statMap.get(cls);
+      const count = stus.length || cs?.participants || 0;
+      let rate = null;
+      if (cls === m.class && h.main?.rate != null) {
+        rate = Number(h.main.rate);
+      } else if (count && cutoffMain != null) {
+        const hit = stus.filter(s => s.total != null && s.total >= cutoffMain).length;
+        rate = Number(((100 * hit) / count).toFixed(1));
+      }
+      const mean = cs?.mean ?? (cls === m.class ? h.mean : null);
+      const isAlert = (rate != null && rate < targetPct - 8) || (mean != null && gradeMean != null && mean < gradeMean - 15);
+      const isLead = rate != null && rate >= targetPct + 12;
+      const active = cls === m.class;
+      const barPct = rate != null ? Math.max(4, Math.min(100, rate)) : 0;
+      const dotCls = isAlert ? 'is-warn' : isLead ? 'is-lead' : '';
+      const dotTitle = isAlert ? '达标偏低需关注' : isLead ? '达标领先' : '达标常规';
+      return `<button type="button" class="bq-item${active ? ' is-active' : ''}" data-action="brief-select-class" data-class="${e(cls)}" aria-current="${active ? 'true' : 'false'}" title="${e(cls)}班 · ${dotTitle}">
+        <div class="bq-row"><strong>${e(cls)}班</strong><span class="bq-meta"><span class="bq-rate">${rate != null ? `${fix(rate, 1)}%` : '—'}</span><i class="bq-dot ${dotCls}" aria-hidden="true"></i></span></div>
+        <div class="bq-bar"><span style="width:${barPct}%"></span></div>
+      </button>`;
+    }).join('');
+    return `<aside class="brief-queue" aria-label="班级队列">
+      <div class="bq-head"><span>班级队列</span><small>${m.classes.length} 班 · 前${targetPct}%占比</small></div>
+      <div class="bq-list">${items}</div>
+    </aside>`;
+  }
+
+  function buildSubjectDivergingHTML(brief, state) {
+    const mode = state.briefDivergeMode === 'high' ? 'high' : 'main';
+    const items = brief.subject_diagnosis || [];
+    if (!items.length) return '';
+    const values = items.map(s => Number(mode === 'high' ? (s.high?.gap ?? 0) : (s.main?.gap ?? 0)));
+    const maxAbs = Math.max(4, ...values.map(v => Math.abs(v)));
+    const rows = items.map((s, idx) => {
+      const val = values[idx];
+      const pct = Math.min(100, Math.round((Math.abs(val) / maxAbs) * 100));
+      const pos = val > 0, neg = val < 0;
+      const severeNeg = neg && (s.mismatch_tone === 'alert' || Math.abs(val) >= maxAbs * 0.65);
+      const valText = val === 0 ? '持平' : `${val > 0 ? '+' : ''}${val} 人`;
+      return `<div class="div-row">
+        <span class="div-sub">${e(s.subject)}</span>
+        <span class="div-side-val is-left${neg ? (severeNeg ? ' is-severe' : ' is-neg') : ''}">${neg ? e(valText) : ''}</span>
+        <div class="div-neg-track">${neg ? `<span class="div-bar ${severeNeg ? 'is-severe' : 'is-neg'}" style="width:${pct}%"></span>` : ''}</div>
+        <div class="div-axis"></div>
+        <div class="div-pos-track">${pos ? `<span class="div-bar is-pos" style="width:${pct}%"></span>` : ''}</div>
+        <span class="div-side-val is-right${pos ? ' is-pos' : ' is-zero'}">${pos ? e(valText) : val === 0 ? '持平' : ''}</span>
+      </div>`;
+    }).join('');
+    return `<div class="brief-block">
+      <div class="brief-block-head">
+        <div><h3>学科贡献度（与总分达标偏离）</h3><p>向右为托举总分，向左为拖累总分（严重短板高亮警示）· 按单科达标数 − 总分达标数计算</p></div>
+        <div class="seg-pills" role="group" aria-label="贡献度口径切换">
+          <button type="button" class="${mode === 'main' ? 'active' : ''}" data-action="brief-diverge-mode" data-mode="main">${e(brief.headline.main.label)}基本盘</button>
+          <button type="button" class="${mode === 'high' ? 'active' : ''}" data-action="brief-diverge-mode" data-mode="high">${e(brief.headline.high.label)}尖优线</button>
+        </div>
+      </div>
+      <div class="div-chart">${rows}</div>
+      <div class="div-scale"><span>−${maxAbs} 人</span><span>0 基准线</span><span>+${maxAbs} 人</span></div>
+    </div>`;
+  }
+
   function renderBriefView(brief, state) {
     const m = brief.meta, h = brief.headline;
     const hPct = Math.round(m.high_ratio * 100), mPct = Math.round(m.main_ratio * 100);
-    const toneClass = t => (t === 'good' ? 'success' : t === 'alert' ? 'danger' : t === 'warn' ? 'warning' : '');
+    const sigDotClass = t => (t === 'good' ? 'is-good' : t === 'alert' ? 'is-danger' : t === 'warn' ? 'is-warn' : 'is-flat');
 
     const subjectRows = brief.subject_diagnosis.map(s => {
-      const others = (s.same_teacher_other_classes || []).map(o => `<span class="brief-other-cls">${e(o.class)}班 均${n(o.mean)} / ${mPct}%:${pctText(o.main_rate)}</span>`).join('');
+      const others = (s.same_teacher_other_classes || []).map(o => `<span class="brief-other-inline">${e(o.class)}班 均${n(o.mean)} / ${pctText(o.main_rate)}</span>`).join(' · ');
       return `<tr>
         <td><strong>${e(s.subject)}</strong></td>
-        <td>${e(s.teacher || '—')}${s.teacher_changed ? `<span class="badge warning" style="margin-left:6px" title="上次：${e(s.prev_teacher)}">换师</span>` : ''}</td>
+        <td>${e(s.teacher || '—')}${s.teacher_changed ? `<span class="quiet-flag is-warn" title="上次：${e(s.prev_teacher)}">换师</span>` : ''}</td>
         <td class="number">${n(s.mean)} <small class="${s.mean_diff > 0 ? 'delta-positive' : s.mean_diff < 0 ? 'delta-negative' : 'muted'}">(${signed(s.mean_diff, 1)})</small></td>
         <td class="number">${n(s.high.achievers, 0)} / ${n(s.high.concentrated, 0)} <small class="${s.high.gap > 0 ? 'delta-positive' : s.high.gap < 0 ? 'delta-negative' : 'muted'}">(${signed(s.high.gap, 0)})</small></td>
         <td class="number">${n(s.main.achievers, 0)} / ${n(s.main.concentrated, 0)} <small class="${s.main.gap > 0 ? 'delta-positive' : s.main.gap < 0 ? 'delta-negative' : 'muted'}">(${signed(s.main.gap, 0)})</small></td>
-        <td><span class="badge ${toneClass(s.mismatch_tone)}">${e(s.mismatch_label)}</span></td>
+        <td><span class="sig-label"><i class="sig-dot ${sigDotClass(s.mismatch_tone)}"></i>${e(s.mismatch_label)}</span></td>
         <td class="brief-other-cell">${others || '<span class="muted">—</span>'}</td>
       </tr>`;
     }).join('');
 
     const flow = brief.flow;
-    const flowHTML = flow.available ? `<div class="brief-flow-grid">
-      <div class="brief-flow-box"><span>${e(h.high.label)}保尖率</span><strong>${pctText(flow.high_keep_rate)}</strong><small>稳住 ${flow.high_keep}/${flow.high_prev} · 掉出 ${flow.high_drop_count} · 冲尖 +${flow.high_rise_count}</small></div>
-      <div class="brief-flow-box"><span>${e(h.main.label)}守线率</span><strong>${pctText(flow.main_keep_rate)}</strong><small>稳住 ${flow.main_keep}/${flow.main_prev} · 跌出 ${flow.main_drop_count} · 突围 +${flow.main_rise_count}</small></div>
-    </div><p class="table-note">较上一场考试（${e(flow.prev_exam_name)}），共跨次匹配 ${flow.matched_count} 名学生。</p>` : `<div class="support-note">${e(flow.reason)}</div>`;
+    const flowHTML = flow.available ? `<div class="brief-flow-strip">
+      <div class="flow-metric"><span>${e(h.high.label)}保尖率</span><strong>${pctText(flow.high_keep_rate)}</strong><small>稳住 ${flow.high_keep}/${flow.high_prev} · 掉出 ${flow.high_drop_count} · 冲尖 +${flow.high_rise_count}</small></div>
+      <div class="flow-metric"><span>${e(h.main.label)}守线率</span><strong>${pctText(flow.main_keep_rate)}</strong><small>稳住 ${flow.main_keep}/${flow.main_prev} · 跌出 ${flow.main_drop_count} · 突围 +${flow.main_rise_count}</small></div>
+    </div><p class="table-note">较上一场考试（${e(flow.prev_exam_name)}），跨次匹配 ${flow.matched_count} 名学生。</p>` : `<p class="muted" style="margin:6px 0 0">${e(flow.reason)}</p>`;
 
     const tplMode = state.briefTemplateTab || 'tpl1-leader';
     const tpl2Ratio = state.briefTpl2Ratio || 'main';
@@ -453,84 +534,81 @@
     const slideCount = brief.level_profile?.counts?.slide || 0;
 
     const overviewHTML = `
-      <section class="panel brief-hero">
-        <div class="section-title brief-hero-head">
-          <div>
-            <h2 class="brief-hero-title"><span>${e(m.grade)} · ${e(m.class)}班 班情诊断</span><span class="badge">班主任：${e(m.homeroom || '未录入')}</span></h2>
-            <p>${e(m.exam_name)}（${e(m.exam_date)}） · 实考 ${n(h.participants, 0)} / ${n(h.registered, 0)} 人 · 已追踪 ${m.exam_count} 场历次考试</p>
-          </div>
-          <div class="brief-tags">${h.tags.map(t => `<span class="badge ${toneClass(t.tone)}">${e(t.text)}</span>`).join('')}</div>
+      <div class="brief-kpi-strip" role="region" aria-label="核心指标">
+        <div class="bk-cell">
+          <span class="bk-label">${e(h.high.label)}尖优 · 线 ${n(h.high.cutoff)}分</span>
+          <strong class="bk-val">${n(h.high.count, 0)}<small>人</small><em>${pctText(h.high.rate)}</em></strong>
+          <span class="bk-sub">较上次 <b class="${(h.high.delta_prev_count || 0) >= 0 ? 'delta-positive' : 'delta-negative'}">${signed(h.high.delta_prev_count, 0, '人')}</b> · 较首考 ${signed(h.high.delta_entry_count, 0, '人')}</span>
         </div>
-        <div class="brief-kpi-grid">
-          <div class="brief-kpi accent-green">
-            <span>${e(h.high.label)}尖优 · 线 ${n(h.high.cutoff)}分</span>
-            <strong>${n(h.high.count, 0)}<em>人 · ${pctText(h.high.rate)}</em></strong>
-            <small class="kpi-meta"><span class="kpi-chip">较上次 ${signed(h.high.delta_prev_count, 0, '人')}</span><span class="kpi-chip">较首考 ${signed(h.high.delta_entry_count, 0, '人')}</span></small>
-          </div>
-          <div class="brief-kpi accent-purple">
-            <span>${e(h.main.label)}基本盘 · 线 ${n(h.main.cutoff)}分</span>
-            <strong>${n(h.main.count, 0)}<em>人 · ${pctText(h.main.rate)}</em></strong>
-            <small class="kpi-meta"><span class="kpi-chip">较上次 ${signed(h.main.delta_prev_count, 0, '人')}</span><span class="kpi-chip">较首考 ${signed(h.main.delta_entry_count, 0, '人')}</span></small>
-          </div>
-          <div class="brief-kpi">
-            <span>尖优含金量（${e(h.high.label)}÷${e(h.main.label)}）</span>
-            <strong>${pctText(h.elite_ratio)}</strong>
-            <small class="kpi-meta"><span class="kpi-chip">${hPct}%–${mPct}%蓄水池：${Math.max(0, (h.main.count || 0) - (h.high.count || 0))} 人</span></small>
-          </div>
-          <div class="brief-kpi">
-            <span>总分均分（离均差）</span>
-            <strong>${n(h.mean)}<em>${signed(h.mean_diff, 1)}</em></strong>
-            <small class="kpi-meta"><span class="kpi-chip">年级均分 ${n(h.grade_mean)}</span><span class="kpi-chip">标准差 ${n(h.std)}</span><span class="kpi-chip">后20% ${n(h.bottom20_count, 0)}人</span></small>
-          </div>
+        <div class="bk-cell">
+          <span class="bk-label">${e(h.main.label)}基本盘 · 线 ${n(h.main.cutoff)}分</span>
+          <strong class="bk-val">${n(h.main.count, 0)}<small>人</small><em>${pctText(h.main.rate)}</em></strong>
+          <span class="bk-sub">较上次 <b class="${(h.main.delta_prev_count || 0) >= 0 ? 'delta-positive' : 'delta-negative'}">${signed(h.main.delta_prev_count, 0, '人')}</b> · 较首考 ${signed(h.main.delta_entry_count, 0, '人')}</span>
         </div>
-        <div class="brief-talking-box">
-          <h3>班情会谈话要点（领导可直接开口）</h3>
-          <ol>${h.talking_points.map(p => `<li>${e(p)}</li>`).join('')}</ol>
+        <div class="bk-cell">
+          <span class="bk-label">尖优含金量（${e(h.high.label)}÷${e(h.main.label)}）</span>
+          <strong class="bk-val">${pctText(h.elite_ratio)}</strong>
+          <span class="bk-sub">${hPct}%–${mPct}%蓄水池：${Math.max(0, (h.main.count || 0) - (h.high.count || 0))} 人</span>
         </div>
-      </section>
+        <div class="bk-cell">
+          <span class="bk-label">总分均分（离均差）</span>
+          <strong class="bk-val">${fix(h.mean, 1)}<em class="${(h.mean_diff || 0) >= 0 ? 'delta-positive' : 'delta-negative'}">${signed(h.mean_diff, 1)}</em></strong>
+          <span class="bk-sub">年级 ${fix(h.grade_mean, 1)} · 标准差 ${fix(h.std, 1)} · <span class="nowrap">后20% ${n(h.bottom20_count, 0)}人</span></span>
+        </div>
+      </div>
 
-      <section class="panel">
-        <div class="section-title">
-          <div><h2>${e(h.high.label)} / ${e(h.main.label)} 双线分学科诊断与同师对比</h2><p>达标/集中括号内为“贡献差（单科达标数 − 总分达标数）”，正数托举、负数拖累</p></div>
+      <div class="anchor-spotlight brief-anchor">
+        <div class="anchor-head">
+          <span class="anchor-kicker">诊断要点 · 班情会可直接开口</span>
+          <div class="anchor-tags">${h.tags.map(t => `<span>${e(t.text)}</span>`).join('')}</div>
+        </div>
+        <ol class="anchor-list">${h.talking_points.map(p => `<li>${e(p)}</li>`).join('')}</ol>
+      </div>
+
+      ${buildSubjectDivergingHTML(brief, state)}
+
+      <div class="brief-block">
+        <div class="brief-block-head">
+          <div><h3>分学科双线数据与同师对比</h3><p>达标/集中括号内为贡献差（单科达标 − 总分达标），同师另班便于横向研判</p></div>
           ${!m.homeroom && !brief.subject_diagnosis.some(s => s.teacher) ? btn('导入任课教师表', 'open-teachers', '', 'secondary small') : ''}
         </div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>学科</th><th>任课教师</th><th class="number">均分（离均差）</th><th class="number" title="贡献差 = 该科达标人数 − 总分达标人数；正数说明该科托举总分，负数说明拖累总分">${e(h.high.label)} 达标/集中(贡献差)</th><th class="number" title="贡献差 = 该科达标人数 − 总分达标人数；正数说明该科托举总分，负数说明拖累总分">${e(h.main.label)} 达标/集中(贡献差)</th><th>双线诊断</th><th>同师另班对照</th></tr></thead>
+            <thead><tr><th>学科</th><th>任课教师</th><th class="number">均分（离均差）</th><th class="number" title="贡献差 = 该科达标人数 − 总分达标人数">${e(h.high.label)} 达标/集中(差)</th><th class="number" title="贡献差 = 该科达标人数 − 总分达标人数">${e(h.main.label)} 达标/集中(差)</th><th>双线诊断</th><th>同师另班对照</th></tr></thead>
             <tbody>${subjectRows}</tbody>
           </table>
         </div>
-      </section>
+      </div>
 
-      <div class="two-col">
-        <section class="panel">
-          <div class="section-title"><div><h2>历次双线占比走势</h2><p>用占本班比例消除历次年级总人数变化干扰</p></div></div>
+      <div class="brief-split-row">
+        <div class="brief-block">
+          <div class="brief-block-head"><div><h3>历次双线占比走势</h3><p>占本班比例，消除历次年级总人数变化干扰</p></div></div>
           ${dualTimelineSVG(brief.timeline, m.high_ratio, m.main_ratio)}
-        </section>
-        <section class="panel">
-          <div class="section-title"><div><h2>双线人员流动</h2><p>区分“保尖/守线”与“掉线/突围”，避免净人数掩盖流失</p></div></div>
+        </div>
+        <div class="brief-block">
+          <div class="brief-block-head"><div><h3>双线人员流动</h3><p>区分保尖/守线与掉线/突围，避免净人数掩盖流失</p></div></div>
           ${flowHTML}
-        </section>
+        </div>
       </div>
     `;
 
     const studentsHTML = `
-      <section class="panel">
-        <div class="section-title">
-          <div><h2>现场点名与包干微名单</h2><p>直接定位最易提分的单科短板生、中优层流失预警与连续薄弱学科学生</p></div>
+      <div class="brief-block" style="border-top:0;padding-top:4px">
+        <div class="brief-block-head">
+          <div><h3>现场点名与包干微名单</h3><p>定位最易提分的单科短板生、中优层流失预警与连续薄弱学科学生</p></div>
           <div class="panel-heading-actions">${btn('复制当前名单', 'copy-brief-list', '', 'secondary small')}${btn('下载 CSV', 'csv-brief-list', '', 'secondary small')}</div>
         </div>
         ${renderActionListsHTML(brief, state.briefListTab || 'high')}
-      </section>
+      </div>
       ${window.LeaderPrintStudio ? window.LeaderPrintStudio.renderComparisonSectionHTML(brief, state) : ''}
     `;
 
     const levelsHTML = window.LeaderLevels ? window.LeaderLevels.renderLevelsSectionHTML(brief, state) : '';
 
     const templatesHTML = `
-      <section class="panel">
-        <div class="section-title">
-          <div><h2>传统打印模板在线预览</h2><p>与学校原有打印习惯一致，支持自动汇总历次考试并分版打印</p></div>
+      <div class="brief-block" style="border-top:0;padding-top:4px">
+        <div class="brief-block-head">
+          <div><h3>传统打印模板在线预览</h3><p>与学校原有打印习惯一致，支持自动汇总历次考试并分版打印</p></div>
           <div class="toolbar-inline">
             ${tplMode === 'tpl2' ? `<label class="small-text">模板2有效分口径 <select id="brief-tpl2-ratio">${option('main', `前${mPct}%`, tpl2Ratio)}${option('high', `前${hPct}%`, tpl2Ratio)}${option('mid30', '前30%（兼容旧表）', tpl2Ratio)}</select></label>` : ''}
             ${btn('打印此预览模板', tplMode === 'tpl1-leader' ? 'print-tpl1-leader' : tplMode === 'tpl1-teacher' ? 'print-tpl1-teacher' : 'print-tpl2', '', 'primary small')}
@@ -542,7 +620,7 @@
           <button data-action="brief-tpl-tab" data-tab="tpl2" class="${tplMode === 'tpl2' ? 'active' : ''}">模板2 · 历次有效分 + 单科 + 薄弱科</button>
         </div>
         <div class="tpl-preview-box">${tplPreview}</div>
-      </section>
+      </div>
     `;
 
     const activeBody = section === 'students'
@@ -553,48 +631,52 @@
           ? templatesHTML
           : overviewHTML;
 
-    return `
-      <section class="panel brief-control-panel">
-        <div class="brief-bar">
-          <div class="class-stepper" role="group" aria-label="逐班切换">
-            <button type="button" data-action="brief-prev-class" title="上一班" aria-label="上一班"${hasPrevCls ? '' : ' disabled'}>‹</button>
-            <select id="brief-class" aria-label="选择班情分析班级">${m.classes.map(c => option(c, `${c}班`, m.class)).join('')}</select>
-            <button type="button" data-action="brief-next-class" title="下一班" aria-label="下一班"${hasNextCls ? '' : ' disabled'}>›</button>
-          </div>
-          <div class="brief-ratio-group">
-            <span>尖优</span>
-            <select id="brief-high-ratio" aria-label="尖优线比例">${highChoices.map(v => option(Number((v / 100).toFixed(4)), `前 ${v}%`, Number(m.high_ratio.toFixed(4)))).join('')}</select>
-            <span>达标</span>
-            <select id="brief-main-ratio" aria-label="达标线比例">${mainChoices.map(v => option(Number((v / 100).toFixed(4)), `前 ${v}%`, Number(m.main_ratio.toFixed(4)))).join('')}</select>
-            ${state.briefRatioOverride ? '<button type="button" class="text-button" data-action="save-brief-ratios" title="将当前试算双线写入本场口径">存为口径</button>' : ''}
-          </div>
-          <div class="brief-actions">
-            ${btn('导出 ABC 表', 'open-abc-export', '', 'secondary small')}
-            ${btn('分模块打印', 'open-print-studio', '', 'primary small')}
-            <details class="print-menu">
-              <summary class="btn quiet small">更多 ▾</summary>
-              <div class="print-menu-list">
-                <button type="button" data-action="print-brief-card"><strong>打印 · 领导谈话卡（1 页横向）</strong><small>20%/40% 双线定调 + 谈话要点 + 包干名单</small></button>
-                <button type="button" data-action="open-batch-print"><strong>批量打印全年级…</strong><small>一键生成全年级 ${m.classes.length} 个班自动分页稿</small></button>
-                <div class="print-menu-divider"></div>
-                <button type="button" data-action="open-student-cards" data-class="${e(m.class)}"><strong>学生个人诊断卡（发家长/学生）…</strong><small>零他人隐私 · 雷达图 + 百分位 + 提分抓手</small></button>
-                <button type="button" data-action="download-class-zip"><strong>一键按班拆包导出 ZIP（发班主任）</strong><small>每班独立文件夹 · 成绩明细 + ABC 表 + 打印版</small></button>
-                <div class="print-menu-divider"></div>
-                <button type="button" data-action="open-teachers"><strong>任课教师配置与导入…</strong><small>配置班主任与各科教师，支持同师多班对照</small></button>
+    return `<div class="brief-workspace">
+      ${buildClassQueueHTML(brief, state)}
+      <div class="brief-stage">
+        <header class="brief-stage-header">
+          <div class="brief-stage-title-row">
+            <div class="brief-stage-id">
+              <h2>${e(m.grade)} · ${e(m.class)}班</h2>
+              <span class="brief-stage-meta">班主任 ${e(m.homeroom || '未录入')} · 实考 ${n(h.participants, 0)}/${n(h.registered, 0)} 人 · 已追踪 ${m.exam_count} 场</span>
+            </div>
+            <div class="brief-stage-controls">
+              <div class="class-stepper brief-mobile-stepper" role="group" aria-label="逐班切换">
+                <button type="button" data-action="brief-prev-class" title="上一班" aria-label="上一班"${hasPrevCls ? '' : ' disabled'}>‹</button>
+                <select id="brief-class" aria-label="选择班情分析班级">${m.classes.map(c => option(c, `${c}班`, m.class)).join('')}</select>
+                <button type="button" data-action="brief-next-class" title="下一班" aria-label="下一班"${hasNextCls ? '' : ' disabled'}>›</button>
               </div>
-            </details>
+              <div class="brief-ratio-inline">
+                <label>尖优<select id="brief-high-ratio" aria-label="尖优线比例">${highChoices.map(v => option(Number((v / 100).toFixed(4)), `前${v}%`, Number(m.high_ratio.toFixed(4)))).join('')}</select></label>
+                <label>达标<select id="brief-main-ratio" aria-label="达标线比例">${mainChoices.map(v => option(Number((v / 100).toFixed(4)), `前${v}%`, Number(m.main_ratio.toFixed(4)))).join('')}</select></label>
+                ${state.briefRatioOverride ? '<button type="button" class="text-button" data-action="save-brief-ratios" title="将当前试算双线写入本场口径">存为口径</button>' : ''}
+              </div>
+              ${btn('导出 ABC', 'open-abc-export', '', 'secondary small')}
+              ${btn('分模块打印', 'open-print-studio', '', 'primary small')}
+              <details class="print-menu">
+                <summary class="btn quiet small">更多 ▾</summary>
+                <div class="print-menu-list">
+                  <button type="button" data-action="print-brief-card"><strong>打印 · 领导谈话卡（1 页横向）</strong><small>20%/40% 双线定调 + 谈话要点 + 包干名单</small></button>
+                  <button type="button" data-action="open-batch-print"><strong>批量打印全年级…</strong><small>一键生成全年级 ${m.classes.length} 个班自动分页稿</small></button>
+                  <div class="print-menu-divider"></div>
+                  <button type="button" data-action="open-student-cards" data-class="${e(m.class)}"><strong>学生个人诊断卡（发家长/学生）…</strong><small>零他人隐私 · 雷达图 + 百分位 + 提分抓手</small></button>
+                  <button type="button" data-action="download-class-zip"><strong>一键按班拆包导出 ZIP（发班主任）</strong><small>每班独立文件夹 · 成绩明细 + ABC 表 + 打印版</small></button>
+                  <div class="print-menu-divider"></div>
+                  <button type="button" data-action="open-teachers"><strong>任课教师配置与导入…</strong><small>配置班主任与各科教师，支持同师多班对照</small></button>
+                </div>
+              </details>
+            </div>
           </div>
-        </div>
-        <div class="brief-subnav" role="tablist" aria-label="班情分析视图切换">
-          <button type="button" role="tab" aria-selected="${section === 'overview'}" data-action="brief-section" data-section="overview" class="${section === 'overview' ? 'active' : ''}">班情总览</button>
-          <button type="button" role="tab" aria-selected="${section === 'students'}" data-action="brief-section" data-section="students" class="${section === 'students' ? 'active' : ''}">学生对比与名单<em>${compCount}</em></button>
-          <button type="button" role="tab" aria-selected="${section === 'levels'}" data-action="brief-section" data-section="levels" class="${section === 'levels' ? 'active' : ''}">等级与 ABC${slideCount ? `<em class="is-warn">预警 ${slideCount}</em>` : ''}</button>
-          <button type="button" role="tab" aria-selected="${section === 'templates'}" data-action="brief-section" data-section="templates" class="${section === 'templates' ? 'active' : ''}">传统打印预览</button>
-        </div>
-        ${state.briefRatioOverride ? '<div class="brief-rules-pill"><span class="badge warning">当前为临时双线试算</span><button type="button" class="text-button" data-action="save-brief-ratios">点击保存为本场口径</button></div>' : ''}
-      </section>
-      ${activeBody}
-    `;
+          <div class="brief-stage-tabs" role="tablist" aria-label="班情分析视图切换">
+            <button type="button" role="tab" aria-selected="${section === 'overview'}" data-action="brief-section" data-section="overview" class="${section === 'overview' ? 'active' : ''}">班情总览</button>
+            <button type="button" role="tab" aria-selected="${section === 'students'}" data-action="brief-section" data-section="students" class="${section === 'students' ? 'active' : ''}">学生对比与名单<em>${compCount}</em></button>
+            <button type="button" role="tab" aria-selected="${section === 'levels'}" data-action="brief-section" data-section="levels" class="${section === 'levels' ? 'active' : ''}">等级与 ABC${slideCount ? `<em class="is-warn">预警 ${slideCount}</em>` : ''}</button>
+            <button type="button" role="tab" aria-selected="${section === 'templates'}" data-action="brief-section" data-section="templates" class="${section === 'templates' ? 'active' : ''}">传统打印预览</button>
+          </div>
+        </header>
+        ${activeBody}
+      </div>
+    </div>`;
   }
 
   function teachersDrawerHTML(analysis, teachersList) {

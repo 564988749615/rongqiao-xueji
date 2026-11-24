@@ -175,7 +175,7 @@
     const quickReasons = ['复核更正', '录入错误', '补录缺考', '其他'];
 
     return `<div class="score-preview-wrap">
-      <div class="metric-strip compact">
+      <div class="anchor-spotlight preview-anchor-strip">
         <div><small>待修改格数</small><strong>${n(sum.edited_cells || 0, 0)}</strong></div>
         <div><small>名次变动人数</small><strong>${n(sum.students_rank_changed || 0, 0)}</strong></div>
         <div><small>等级变动人数</small><strong>${n(sum.students_grade_changed || 0, 0)}</strong></div>
