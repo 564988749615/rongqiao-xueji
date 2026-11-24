@@ -464,7 +464,7 @@
       <div class="names">${names.length ? names.map(nm => `<span>${e(nm)}</span>`).join('') : '<em>暂无学生</em>'}</div>
     </div>`;
     }).join('')}</div>
-    <div class="foot">说明：组内按姓氏拼音排序，可用于课堂分层教学、分层作业与个别辅导。</div>
+    <div class="foot">说明：组内按姓氏拼音排序，可用于课堂分层教学、分层作业与个别辅导。 ｜ 数据版本 v${m.data_version || 1}${m.edit_count ? ` · 含 ${m.edit_count} 处更正` : ' · 原始导入'}</div>
   </div>
 </body></html>`;
     const win = window.open('', '_blank', 'width=940,height=860');

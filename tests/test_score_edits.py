@@ -432,5 +432,59 @@ class Task6BatchImportTests(ScoreEditsBaseTest):
         self.assertEqual(edits_now['edit_count'], 0)
 
 
+class Task7VersionStampTests(ScoreEditsBaseTest):
+    def test_excel_abc_zip_and_brief_contain_data_version_stamp(self):
+        import zipfile
+
+        ds = _sample_dataset('exam-ver-1', '初三版本测', '2026-10-15')
+        self._post('/api/exams', {'dataset': ds})
+
+        ana_v1 = self._post('/api/analyze', {'exam_id': ds['id']})
+        req = Request(
+            f'http://127.0.0.1:{self.port}/api/export/xlsx',
+            data=json.dumps({'analysis': ana_v1}, ensure_ascii=False).encode('utf-8'),
+            headers={'Content-Type': 'application/json'},
+            method='POST',
+        )
+        with urlopen(req, timeout=5) as resp:
+            wb_v1 = openpyxl.load_workbook(io.BytesIO(resp.read()))
+        ws1_v1 = wb_v1.active
+        self.assertIn('数据版本 v1 · 原始导入', str(ws1_v1['A2'].value or '') + ' ' + str(ws1_v1.oddFooter.left.text or ''))
+
+        # Make 1 edit -> v2
+        self._post(f"/api/exams/{ds['id']}/scores", {
+            'edits': [{'row_id': 'student:102', 'subject': '数学', 'value': 135}],
+            'reason': '核分更正',
+        })
+        ana_v2 = self._post('/api/analyze', {'exam_id': ds['id']})
+        req2 = Request(
+            f'http://127.0.0.1:{self.port}/api/export/xlsx',
+            data=json.dumps({'analysis': ana_v2}, ensure_ascii=False).encode('utf-8'),
+            headers={'Content-Type': 'application/json'},
+            method='POST',
+        )
+        with urlopen(req2, timeout=5) as resp:
+            wb_v2 = openpyxl.load_workbook(io.BytesIO(resp.read()))
+        ws1_v2 = wb_v2.active
+        self.assertIn('数据版本 v2 · 含 1 处更正', str(ws1_v2['A2'].value or '') + ' ' + str(ws1_v2.oddFooter.left.text or ''))
+
+        # ABC Excel contains version stamp
+        abc_raw, _ = self._get(f"/api/exams/{ds['id']}/class-abc.xlsx?mode=six")
+        wb_abc = openpyxl.load_workbook(io.BytesIO(abc_raw))
+        ws_abc = wb_abc['01班']
+        self.assertIn('数据版本 v2 · 含 1 处更正', str(ws_abc['A2'].value or '') + ' ' + str(ws_abc.oddFooter.left.text or ''))
+
+        # Class packages ZIP HTML contains version stamp
+        zip_raw, _ = self._get(f"/api/exams/{ds['id']}/class-packages.zip")
+        with zipfile.ZipFile(io.BytesIO(zip_raw)) as zf:
+            html_str = zf.read('01班/01班_班情分析打印版.html').decode('utf-8')
+            self.assertIn('数据版本 v2 · 含 1 处更正', html_str)
+
+        # Class brief meta exposes version & edit_count
+        brief = self._post('/api/class-brief', {'exam_id': ds['id'], 'class': '01'})
+        self.assertEqual(brief['meta']['data_version'], 2)
+        self.assertEqual(brief['meta']['edit_count'], 1)
+
+
 if __name__ == '__main__':
     unittest.main()

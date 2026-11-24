@@ -31,7 +31,10 @@ def export_workbook(analysis: dict) -> bytes:
         return "'" + value if re.match(r'^\s*[=+@-]', value) else value
 
     meta = analysis.get('metadata', {})
-    subtitle = f"{meta.get('grade', '')} · {meta.get('name', '')} · {meta.get('date', '')}"
+    ver = int(meta.get('data_version') or 1)
+    ec = int(meta.get('edit_count') or 0)
+    version_tag = f'数据版本 v{ver} · 含 {ec} 处更正' if ec > 0 else f'数据版本 v{ver} · 原始导入'
+    subtitle = f"{meta.get('grade', '')} · {meta.get('name', '')} · {meta.get('date', '')} · {version_tag}"
     for item in analysis['tables']:
         cols, rows = item.get('columns', []), item.get('rows', [])
         if not cols or len(cols) > 200 or len(rows) > 50000:
@@ -94,6 +97,7 @@ def export_workbook(analysis: dict) -> bytes:
         ws.page_setup.fitToHeight = 0
         ws.sheet_properties.pageSetUpPr.fitToPage = True
         ws.print_area = f'A1:{last}{ws.max_row}'
+        ws.oddFooter.left.text = version_tag
         ws.oddFooter.center.text = '第 &P 页 / 共 &N 页'
     if not wb.sheetnames:
         raise ValueError('没有可导出的工作表。')

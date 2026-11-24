@@ -765,7 +765,7 @@
         </div>
         <div class="pm-meta-right">
           <strong>${e(m.exam_name)}（${e(m.exam_date)}）</strong>
-          <span>班主任：${e(m.homeroom || '未录入')} ｜ 对比基准：${e(base ? base.name : '暂无')} ｜ 包含模块：${activeIds.join('·')}</span>
+          <span>班主任：${e(m.homeroom || '未录入')} ｜ 对比基准：${e(base ? base.name : '暂无')} ｜ 数据版本 v${m.data_version || 1}${m.edit_count ? ` · 含 ${m.edit_count} 处更正` : ' · 原始导入'}</span>
         </div>
       </header>
       ${modHTML}

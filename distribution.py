@@ -250,8 +250,11 @@ def _class_excel_bytes(analysis: dict, brief: dict, cls: str) -> bytes:
     ws1 = wb.active
     ws1.title = f'{cls}班成绩明细'
     ws1.sheet_view.showGridLines = False
+    ver = int(meta.get('data_version') or (analysis.get('metadata') or {}).get('data_version') or 1)
+    ec = int(meta.get('edit_count') or (analysis.get('metadata') or {}).get('edit_count') or 0)
+    version_tag = f'数据版本 v{ver} · 含 {ec} 处更正' if ec > 0 else f'数据版本 v{ver} · 原始导入'
     ws1.append([f"{meta['grade']} · {meta['exam_name']} · {cls}班学生成绩与薄弱学科"])
-    ws1.append([f"考试日期：{meta['exam_date']} · 仅包含{cls}班学生，不含其他班级隐私信息"])
+    ws1.append([f"考试日期：{meta['exam_date']} · {version_tag} · 仅包含{cls}班学生"])
     ws1.append([])
     cols1 = ['姓名', '总分', '班内名次', '年级名次', '总分ABC', '总分六级', *subjects, '优先关注薄弱科']
     ws1.append(cols1)
@@ -451,7 +454,7 @@ def _class_print_html(analysis: dict, brief: dict) -> str:
       <table><thead><tr><th>姓名</th><th class="num">总分</th><th class="num">名次</th><th class="num">分差</th><th>待补学科</th></tr></thead><tbody>{bm_rows}</tbody></table>
     </div>
   </div>
-  <p class="meta" style="margin-top:8px">融侨学迹 · 班主任专属分发版（仅含本班数据，不含其他班级学生隐私信息）</p>
+  <p class="meta" style="margin-top:8px">融侨学迹 · 班主任专属分发版（仅含本班数据） · 数据版本 v{int(meta.get('data_version') or 1)} · {('含 ' + str(int(meta.get('edit_count') or 0)) + ' 处更正') if int(meta.get('edit_count') or 0) > 0 else '原始导入'}</p>
 </div>
 </body>
 </html>'''
@@ -552,12 +555,16 @@ def _populate_class_abc_sheet(ws, analysis: dict, cls: str, *, mode: str = 'six'
 
     ws.sheet_view.showGridLines = False
     ws.append([f"{meta.get('grade', '')} · {meta.get('name', '')} · {cls}班 学生等级表（按姓氏排序）"])
+    ver = int(meta.get('data_version') or 1)
+    ec = int(meta.get('edit_count') or 0)
+    version_tag = f'数据版本 v{ver} · 含 {ec} 处更正' if ec > 0 else f'数据版本 v{ver} · 原始导入'
     sub_parts = [
         f"考试日期：{meta.get('date', '')}",
         f"班主任：{homeroom}" if homeroom else '',
         f"人数：{len(cls_students)}人",
         f"等级口径：{mode_label}",
         '按姓氏拼音排序',
+        version_tag,
     ]
     ws.append([' · '.join(p for p in sub_parts if p)])
     ws.append([])
@@ -671,6 +678,7 @@ def _populate_class_abc_sheet(ws, analysis: dict, cls: str, *, mode: str = 'six'
     ws.page_margins.right = 0.35
     ws.page_margins.top = 0.4
     ws.page_margins.bottom = 0.4
+    ws.oddFooter.left.text = version_tag
 
 
 def build_class_abc_workbook(

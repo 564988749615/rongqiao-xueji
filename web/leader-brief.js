@@ -167,7 +167,7 @@
         <div class="tpl-meta-right"><strong>${versionText}</strong><small>班主任：${e(brief.meta.homeroom || '未录入')} ｜ 当前：${e(brief.meta.exam_name)}（${e(brief.meta.exam_date)}）</small></div>
       </div>
       ${blocks}
-      <div class="tpl-foot"><span>统计口径：名次累计人数（同分并列全纳入） · 高亮行为本次最新考试</span><span>融侨学迹 · 教研分析存档</span></div>
+      <div class="tpl-foot"><span>统计口径：名次累计人数（同分并列全纳入） · 高亮行为本次最新考试</span><span>数据版本 v${brief.meta.data_version || 1}${brief.meta.edit_count ? ` · 含 ${brief.meta.edit_count} 处更正` : ' · 原始导入'} · 融侨学迹</span></div>
     </div>`;
   }
 
@@ -206,7 +206,7 @@
       </div>
       <div class="table-wrap"><table class="tpl-table tpl2-top"><thead><tr class="tpl-group-row"><th colspan="${6 + subjects.length * 3}">历次测试有效分达标数、集中数（达标率前${e(ratioLabel)}）</th></tr><tr><th rowspan="2" class="center">序号</th><th rowspan="2">考试名称</th><th rowspan="2" class="center">班级</th><th rowspan="2" class="center">班主任</th><th rowspan="2" class="number">参考<br>人数</th><th rowspan="2" class="number">优生<br>人数</th>${subjects.map(s => `<th colspan="3" class="center grp-start">${e(s)}</th>`).join('')}</tr><tr>${subjects.map(() => '<th class="center grp-start">教师</th><th class="number">达标</th><th class="number">集中</th>').join('')}</tr></thead><tbody>${topRows}</tbody></table></div>
       <div class="tpl2-bottom"><div>${matrixHTML}</div><div>${weakHTML}</div></div>
-      <div class="tpl-foot"><span>集中数 = 总分与该科同时达到前${e(ratioLabel)}有效线的人数；薄弱学科按第${n(brief.meta.weak_rank_index || 1, 0)}薄弱统计</span><span>融侨学迹 · 教研分析存档</span></div>
+      <div class="tpl-foot"><span>集中数 = 总分与该科同时达到前${e(ratioLabel)}有效线的人数；薄弱学科按第${n(brief.meta.weak_rank_index || 1, 0)}薄弱统计</span><span>数据版本 v${brief.meta.data_version || 1}${brief.meta.edit_count ? ` · 含 ${brief.meta.edit_count} 处更正` : ' · 原始导入'} · 融侨学迹</span></div>
     </div>`;
   }
 
@@ -250,7 +250,7 @@
         <div class="card-title-block">
           <div class="print-brand-tag"><span></span>融侨学迹 · 班情分析会议专用</div>
           <h1>${e(m.grade)} · ${e(m.class)}班 班情双线谈话卡</h1>
-          <p class="card-meta-line"><span>${e(m.exam_name)}（${e(m.exam_date)}）</span><span>班主任：<strong>${e(m.homeroom || '未录入')}</strong></span><span>实考 ${n(h.participants, 0)}/${n(h.registered, 0)} 人</span><span>标准差 ${n(h.std)}</span><span>后20% ${n(h.bottom20_count, 0)} 人</span></p>
+          <p class="card-meta-line"><span>${e(m.exam_name)}（${e(m.exam_date)}）</span><span>班主任：<strong>${e(m.homeroom || '未录入')}</strong></span><span>实考 ${n(h.participants, 0)}/${n(h.registered, 0)} 人</span><span>标准差 ${n(h.std)}</span><span>后20% ${n(h.bottom20_count, 0)} 人</span><span>数据版本 v${m.data_version || 1}${m.edit_count ? ` · 含 ${m.edit_count} 处更正` : ' · 原始导入'}</span></p>
         </div>
         <div class="card-kpis">
           <div class="kpi-green"><small>${e(hL)}尖优（线 ${n(h.high.cutoff)}）</small><b>${n(h.high.count, 0)}人 <em>${pctText(h.high.rate)}</em></b><span>较上次 ${signed(h.high.delta_prev_count, 0)} · 较首考 ${signed(h.high.delta_entry_count, 0)}</span></div>

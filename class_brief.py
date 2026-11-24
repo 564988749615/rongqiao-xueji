@@ -1125,6 +1125,8 @@ def build_class_brief(
             "exam_id": curr_info["id"],
             "exam_name": curr_info["name"],
             "exam_date": curr_info["date"],
+            "data_version": int(curr_analysis.get("metadata", {}).get("data_version") or curr_info.get("data_version") or 1),
+            "edit_count": int(curr_analysis.get("metadata", {}).get("edit_count") or curr_info.get("edit_count") or 0),
             "homeroom": curr_tl["homeroom"],
             "exam_count": len(timeline),
             "high_ratio": high_ratio,
