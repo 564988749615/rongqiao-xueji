@@ -104,16 +104,18 @@
       th.num,td.num{text-align:right;white-space:nowrap}
       .empty-cell{text-align:center;color:#69627e;padding:16px}
       .sheet-foot{display:flex;justify-content:space-between;align-items:center;margin-top:8px;padding-top:6px;border-top:1px solid #e4e1ee;font-size:10px;color:#69627e}
+      body.bw-preview .sheet-stack{filter:grayscale(100%) contrast(1.08)}
+      .bw-toggle{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:#4a435e;cursor:pointer;user-select:none}
       @page{size:A4 ${landscape?'landscape':'portrait'};margin:10mm 11mm}
       @media print{
         body{background:#fff}
         .controls{display:none!important}
-        .sheet-stack{padding:0;display:block}
+        .sheet-stack{padding:0;display:block;filter:none!important}
         .sheet{width:auto;padding:0;margin:0;border-radius:0;box-shadow:none}
       }
     </style></head><body>
       <div class="controls">
-        <div class="controls-left"><button onclick="window.print()">打印 / 存为 PDF</button><small>${escape(title)} · 共 ${list.length} 张报表（建议 A4 ${landscape?'横向':'纵向'}，已自动设置分页与重复表头）</small></div>
+        <div class="controls-left"><button onclick="window.print()">打印 / 存为 PDF</button><label class="bw-toggle"><input type="checkbox" onchange="document.body.classList.toggle('bw-preview',this.checked)">黑白打印预览</label><small>${escape(title)} · 共 ${list.length} 张报表（A4 ${landscape?'横向':'纵向'}）</small></div>
         <small>融侨学迹 · 纸面打印预览</small>
       </div>
       <div class="sheet-stack">

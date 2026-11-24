@@ -942,6 +942,57 @@ tr[tabindex]:focus-visible { outline: 2px solid var(--primary); outline-offset: 
 .studio-custom-details summary small { font-size: 12px; font-weight: 500; color: var(--primary-dark); }
 .studio-custom-details[open] summary { margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
 
+/* 年级一页简报（本次三件事） */
+.grade-brief-panel { margin-bottom: 16px; border-color: var(--line-strong); background: linear-gradient(180deg, var(--surface-tint) 0%, var(--surface) 48%); }
+.grade-brief-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.gb-card {
+  display: flex; flex-direction: column; gap: 6px; padding: 13px 15px;
+  border: 1px solid var(--line); border-top: 3px solid var(--good); border-radius: var(--r-md);
+  background: var(--surface);
+}
+.gb-card.is-warn { border-top-color: var(--warn); }
+.gb-card.is-accent { border-top-color: var(--primary); }
+.gb-kicker { font-size: 11.5px; font-weight: 650; color: var(--muted); }
+.gb-card strong { font-size: 15px; color: var(--ink); line-height: 1.35; }
+.gb-card p { margin: 0; font-size: 12.5px; color: var(--ink-secondary); line-height: 1.55; }
+.gb-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: auto; padding-top: 6px; }
+
+/* 顶部全局学生搜索与个人档案 */
+.global-stu-search { position: relative; }
+.global-stu-search input {
+  width: 175px; height: 32px; padding: 0 10px; font-size: 12.5px;
+  border: 1px solid var(--line-strong); border-radius: var(--r-sm);
+  background: var(--surface-subtle); color: var(--ink);
+  transition: width var(--dur) var(--ease), border-color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.global-stu-search input:focus { width: 230px; background: var(--surface); border-color: var(--primary); outline: none; }
+.global-stu-dropdown {
+  position: absolute; top: calc(100% + 6px); right: 0; width: 340px; max-height: 360px; overflow: auto; z-index: 70;
+  background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-md);
+  box-shadow: var(--shadow-lg); padding: 6px;
+}
+.global-stu-item {
+  width: 100%; text-align: left; border: 0; background: transparent; padding: 8px 10px;
+  border-radius: var(--r-sm); display: flex; flex-direction: column; gap: 3px; cursor: pointer;
+}
+.global-stu-item:hover { background: var(--primary-soft); }
+.global-stu-item > div { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.global-stu-item strong { font-size: 13.5px; color: var(--ink); }
+.global-stu-item small { font-size: 11.5px; color: var(--muted); }
+.global-stu-empty { padding: 14px 10px; text-align: center; font-size: 12.5px; color: var(--muted); }
+
+.profile-weak-bar {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 9px 12px; border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--surface-subtle); margin-bottom: 12px; font-size: 12.5px;
+}
+.profile-notes-list { display: grid; gap: 8px; margin-bottom: 12px; }
+.profile-note-item { padding: 9px 12px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface-subtle); }
+.profile-note-item header { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 4px; }
+.profile-note-item time { font-size: 11.5px; color: var(--muted); }
+.profile-note-item p { margin: 0; font-size: 13px; color: var(--ink); line-height: 1.55; white-space: pre-wrap; }
+.profile-note-form { padding: 12px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); }
+
 @media (max-width: 780px) {
   .leader-sidebar {
     position: static; width: auto; padding: 12px 14px 0;
@@ -972,7 +1023,9 @@ tr[tabindex]:focus-visible { outline: 2px solid var(--primary); outline-offset: 
   .brief-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
   .brief-kpi { padding: 10px 11px; }
   .brief-kpi strong { font-size: 20px; }
-  .brief-flow-grid, .growth-charts, .history-select-grid, .form-grid, .form-grid.two, .rules-grades-grid, .multi-sheet-fields, .studio-presets, .studio-scope-box, .lvl-groups-grid, .abc-mode-grid { grid-template-columns: 1fr; }
+  .brief-flow-grid, .growth-charts, .history-select-grid, .form-grid, .form-grid.two, .rules-grades-grid, .multi-sheet-fields, .studio-presets, .studio-scope-box, .lvl-groups-grid, .abc-mode-grid, .grade-brief-grid { grid-template-columns: 1fr; }
+  .global-stu-search input, .global-stu-search input:focus { width: 145px; }
+  .global-stu-dropdown { width: min(320px, 92vw); left: 0; right: auto; }
   .s3-diff-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .rules-row { grid-template-columns: 1fr; gap: 5px; }
   .leader-drawer { width: 100vw; }

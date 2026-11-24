@@ -313,7 +313,7 @@ def _class_excel_bytes(analysis: dict, brief: dict, cls: str) -> bytes:
         miss = '、'.join(f"{m['subject']}(-{m['gap']})" if m.get('gap') is not None else m['subject'] for m in (item.get('missing_subjects') or []))
         ws3.append([f"冲{hl['main']['label']}临界", _safe_excel_cell(item['name']), item.get('total'), item.get('rank'), f"距线-{item.get('score_gap')}分；{miss}"])
     for item in lists.get('drop_alerts') or []:
-        ws3.append(['掉线失血预警', _safe_excel_cell(item['name']), None, item.get('curr_rank'), f"{item.get('prev_tier')}→{item.get('curr_tier')}，名次退步+{item.get('rank_drop')}"])
+        ws3.append(['中优层流失预警', _safe_excel_cell(item['name']), None, item.get('curr_rank'), f"{item.get('prev_tier')}→{item.get('curr_tier')}，名次退步+{item.get('rank_drop')}"])
     for item in lists.get('mentor_list') or []:
         ws3.append(['导师制名单', _safe_excel_cell(item['name']), item.get('total'), item.get('rank'), '薄弱科：' + ('、'.join(item.get('weak') or []) or '—')])
 

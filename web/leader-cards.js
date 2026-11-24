@@ -105,7 +105,7 @@
       <div class="sc-body">
         <div class="sc-table-col">
           <table>
-            <thead><tr><th>学科</th><th class="num">得分</th><th class="center">等级</th><th>学科位置（PR）</th><th class="num">较均分</th></tr></thead>
+            <thead><tr><th>学科</th><th class="num">得分</th><th class="center">等级</th><th>学科年级百分位</th><th class="num">较均分</th></tr></thead>
             <tbody>${subRows}</tbody>
           </table>
         </div>
@@ -206,10 +206,13 @@
   .sc-advice p { margin: 1.5px 0; }
   .sc-sign { display: flex; justify-content: space-between; align-items: flex-end; border-top: 1px dashed #d1c8e2; padding-top: 4px; font-size: 9.5px; color: #5c526e; flex-shrink: 0; }
   .is-full .sc-sign { min-height: 58px; padding-top: 10px; font-size: 11px; }
+  .print-bar-actions { display: flex; align-items: center; gap: 14px; }
+  .bw-toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: #e5dff2; cursor: pointer; user-select: none; }
+  body.bw-preview .print-canvas { filter: grayscale(100%) contrast(1.08); }
   @media print {
     body { background: #fff; }
     .print-bar { display: none; }
-    .print-canvas { padding: 0; gap: 0; display: block; }
+    .print-canvas { padding: 0; gap: 0; display: block; filter: none !important; }
     .a4-sheet { width: auto; min-height: 0; padding: 0; box-shadow: none; page-break-after: always; break-after: page; }
     .a4-sheet:last-child { page-break-after: auto; break-after: auto; }
   }
@@ -218,7 +221,10 @@
 <body>
   <div class="print-bar">
     <span>学生个人学业诊断卡 · 共 ${cards.length} 份（${compact ? 'A4 一页两生' : 'A4 一页一生'} · ${hideRank ? '已隐藏具体名次' : '含年级参考位次'}）</span>
-    <button type="button" onclick="window.print()">打印 / 另存为 PDF</button>
+    <div class="print-bar-actions">
+      <label class="bw-toggle"><input type="checkbox" onchange="document.body.classList.toggle('bw-preview',this.checked)">黑白打印预览</label>
+      <button type="button" onclick="window.print()">打印 / 另存为 PDF</button>
+    </div>
   </div>
   <div class="print-canvas">${pages.join('')}</div>
 </body></html>`;

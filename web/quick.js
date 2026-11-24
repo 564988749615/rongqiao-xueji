@@ -602,8 +602,11 @@
     $('quick-rules-default-btn').addEventListener('click', async () => {
       try {
         const rules = readRules();
+        if (!window.confirm('确认将当前试算参数设为「全校默认口径」吗？\n\n影响范围：后续所有新导入的考试和试算将自动沿用这套规则；已保存的历史考试不会被改动。')) {
+          return;
+        }
         await Z.api('/api/default-rules', { rules });
-        Z.notice('已保存为全校默认口径，后续新建考试与快速出表将自动沿用。');
+        Z.notice('已保存为全校默认口径，后续新建考试与试算将自动沿用。');
       } catch (err) { showError(err); }
     });
     $('quick-rules-reset-btn').addEventListener('click', () => {

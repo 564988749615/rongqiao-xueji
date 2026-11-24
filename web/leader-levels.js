@@ -437,10 +437,13 @@
   .names { display: flex; flex-wrap: wrap; gap: 6px; }
   .names span { display: inline-block; padding: 2px 9px; border-radius: 4px; border: 1px solid #dfd7ee; background: #faf8fd; font-size: 11.5px; font-weight: 550; }
   .foot { margin-top: 14px; font-size: 10px; color: #786e8a; border-top: 1px dashed #d4cbe4; padding-top: 8px; }
-  @media print { body { background: #fff; } .print-bar { display: none; } .sheet { width: auto; min-height: 0; margin: 0; padding: 0; box-shadow: none; } }
+  .print-bar-actions { display: flex; align-items: center; gap: 12px; }
+  .bw-toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: #e5dff2; cursor: pointer; user-select: none; }
+  body.bw-preview .sheet { filter: grayscale(100%) contrast(1.08); }
+  @media print { body { background: #fff; } .print-bar { display: none; } .sheet { width: auto; min-height: 0; margin: 0; padding: 0; box-shadow: none; filter: none !important; } }
 </style></head>
 <body>
-  <div class="print-bar"><span>${e(m.grade)} ${e(m.class)}班 · ${e(item.subject)}分层教学分组单</span><button onclick="window.print()">打印 / 另存为 PDF</button></div>
+  <div class="print-bar"><span>${e(m.grade)} ${e(m.class)}班 · ${e(item.subject)}分层教学分组单</span><div class="print-bar-actions"><label class="bw-toggle"><input type="checkbox" onchange="document.body.classList.toggle('bw-preview',this.checked)">黑白打印预览</label><button onclick="window.print()">打印 / 另存为 PDF</button></div></div>
   <div class="sheet">
     <div class="head">
       <div><div class="brand">融侨学迹 · 学科分层教学分组单</div><h1>${e(m.grade)} · ${e(m.class)}班 ${e(item.subject)}分层教学分组</h1></div>

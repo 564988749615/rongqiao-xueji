@@ -25,7 +25,7 @@ VERSION = '1.1.0'
 MAX_REQUEST = 32 * 1024 * 1024
 sys.path.insert(0, str(ROOT / '.runtime'))
 
-from class_brief import build_class_brief
+from class_brief import build_class_brief, build_grade_brief
 from distribution import (
     build_class_abc_workbook,
     build_class_abc_zip,
@@ -43,7 +43,7 @@ from exporter import (
     generate_score_template_xlsx,
     generate_teacher_template_xlsx,
 )
-from history import calculate_history as _calculate_history_core, enrich_trends_scales
+from history import calc_pr, calc_t_score, calculate_history as _calculate_history_core, enrich_trends_scales
 import s3_store
 from workbook import (
     apply_name_fixes,
@@ -850,18 +850,25 @@ class Handler(BaseHTTPRequestHandler):
                 summary_rows = conn.execute(
                     f'{_SUMMARY_SQL} WHERE archived=0 ORDER BY exam_date, created_at, id'
                 ).fetchall()
-                latest_ids = {}
+                by_grade_ids: dict[str, list[str]] = {}
                 for row in summary_rows:
-                    latest_ids[row['grade'] or '未分年级'] = row['id']
+                    by_grade_ids.setdefault(row['grade'] or '未分年级', []).append(row['id'])
                 grades = []
-                for grade_name, exam_id in sorted(latest_ids.items()):
-                    full_row = conn.execute('SELECT * FROM exams WHERE id=?', (exam_id,)).fetchone()
-                    if full_row is not None:
+                for grade_name, exam_ids in sorted(by_grade_ids.items()):
+                    recent_ids = exam_ids[-2:]
+                    recent_pairs = []
+                    for eid in recent_ids:
+                        frow = conn.execute('SELECT * FROM exams WHERE id=?', (eid,)).fetchone()
+                        if frow is not None:
+                            recent_pairs.append((exam_summary(frow), exam_analysis(frow, include_tables=False)))
+                    if recent_pairs:
+                        latest_info, latest_ana = recent_pairs[-1]
                         grades.append(
                             dict(
                                 grade=grade_name,
-                                exam=exam_summary(full_row),
-                                analysis=exam_analysis(full_row, include_tables=False),
+                                exam=latest_info,
+                                analysis=latest_ana,
+                                grade_brief=build_grade_brief(recent_pairs),
                             )
                         )
             totals = dict(
@@ -871,6 +878,173 @@ class Handler(BaseHTTPRequestHandler):
                 participants=sum(g['analysis']['summary']['participants'] for g in grades),
             )
             return self.send(dict(grades=grades, totals=totals, exam_count=len(summary_rows)))
+        if path == '/api/students/search':
+            q = (query.get('q') or [''])[0].strip().lower()
+            grade_filter = (query.get('grade') or [''])[0].strip()
+            if not q:
+                return self.send(dict(results=[]))
+            with db() as conn:
+                if grade_filter:
+                    ex_rows = conn.execute(
+                        'SELECT * FROM exams WHERE archived=0 AND grade=? ORDER BY exam_date DESC, created_at DESC, id DESC',
+                        (grade_filter,),
+                    ).fetchall()
+                else:
+                    ex_rows = conn.execute(
+                        'SELECT * FROM exams WHERE archived=0 ORDER BY exam_date DESC, created_at DESC, id DESC'
+                    ).fetchall()
+            grouped: dict[tuple, dict] = {}
+            for erow in ex_rows:
+                info = exam_summary(erow)
+                ana = exam_analysis(erow, include_tables=False)
+                g_name = info['grade']
+                for s in ana['students']:
+                    haystack = f"{s.get('name', '')} {s.get('class', '')} {s.get('id', '')}".lower()
+                    if q not in haystack:
+                        continue
+                    reliable = bool(s.get('identity_reliable'))
+                    key = (g_name, s['id']) if reliable else (g_name, s.get('class', ''), s.get('name', ''))
+                    if key not in grouped:
+                        grouped[key] = {
+                            'grade': g_name,
+                            'student_id': s['id'],
+                            'identity_reliable': reliable,
+                            'name': s.get('name', ''),
+                            'class': s.get('class', ''),
+                            'exam_id': info['id'],
+                            'exam_name': info['name'],
+                            'exam_date': info['date'],
+                            'exam_count': 1,
+                            'total': s.get('total'),
+                            'rank': s.get('rank'),
+                            'class_rank': s.get('class_rank'),
+                            'total_level': (s.get('levels') or {}).get('总分') or '',
+                            'weak': [w['subject'] for w in (s.get('weak') or [])[:3] if isinstance(w, dict) and w.get('subject')],
+                        }
+                    else:
+                        grouped[key]['exam_count'] += 1
+            results = sorted(
+                grouped.values(),
+                key=lambda x: (
+                    0 if str(x['name']).lower() == q else (1 if str(x['name']).lower().startswith(q) else 2),
+                    x['exam_date'] or '',
+                ),
+            )[:20]
+            return self.send(dict(results=results))
+        if path == '/api/students/profile':
+            grade_name = (query.get('grade') or [''])[0].strip()
+            student_id = (query.get('student_id') or [''])[0].strip()
+            name_q = (query.get('name') or [''])[0].strip()
+            class_q = (query.get('class') or [''])[0].strip()
+            if not (student_id or name_q):
+                raise ValueError('请提供学生标识或姓名。')
+            with db() as conn:
+                if grade_name:
+                    ex_rows = conn.execute(
+                        'SELECT * FROM exams WHERE archived=0 AND grade=? ORDER BY exam_date, created_at, id',
+                        (grade_name,),
+                    ).fetchall()
+                else:
+                    ex_rows = conn.execute(
+                        'SELECT * FROM exams WHERE archived=0 ORDER BY exam_date, created_at, id'
+                    ).fetchall()
+                note_rows = conn.execute(
+                    'SELECT * FROM notes ORDER BY created_at DESC, rowid DESC'
+                ).fetchall()
+            history_items = []
+            weak_counter: dict[str, int] = {}
+            matched_student = None
+            matched_exam_ids = set()
+            matched_classes = set()
+            for erow in ex_rows:
+                info = exam_summary(erow)
+                ana = exam_analysis(erow, include_tables=False)
+                rec = None
+                if student_id:
+                    rec = next((s for s in ana['students'] if s['id'] == student_id), None)
+                if rec is None and name_q:
+                    rec = next(
+                        (s for s in ana['students'] if s.get('name') == name_q and (not class_q or s.get('class') == class_q)),
+                        None,
+                    )
+                if rec is None:
+                    continue
+                matched_student = rec
+                matched_exam_ids.add(info['id'])
+                matched_classes.add(rec.get('class', ''))
+                parts = int(ana['summary'].get('participants') or 0)
+                totals = [float(x['total']) for x in ana['students'] if x.get('rank') is not None and x.get('total') is not None]
+                g_mean = (sum(totals) / len(totals)) if totals else None
+                g_std = ((sum((v - g_mean) ** 2 for v in totals) / len(totals)) ** 0.5) if (totals and g_mean is not None) else None
+                weak_list = [w['subject'] for w in (rec.get('weak') or []) if isinstance(w, dict) and w.get('subject')]
+                for sub_w in weak_list[:2]:
+                    weak_counter[sub_w] = weak_counter.get(sub_w, 0) + 1
+                history_items.append({
+                    'exam_id': info['id'],
+                    'exam_name': info['name'],
+                    'date': info['date'],
+                    'grade': info['grade'],
+                    'class': rec.get('class', ''),
+                    'total': rec.get('total'),
+                    'rank': rec.get('rank'),
+                    'class_rank': rec.get('class_rank'),
+                    'participants': parts,
+                    'pr': calc_pr(rec.get('rank'), parts),
+                    't_score': calc_t_score(rec.get('total'), g_mean, g_std),
+                    'total_grade': (rec.get('grades') or {}).get('总分') or '—',
+                    'total_level': (rec.get('levels') or {}).get('总分') or '—',
+                    'subjects': ana['subjects'],
+                    'scores': rec.get('scores') or {},
+                    'ranks': rec.get('ranks') or {},
+                    'levels': rec.get('levels') or {},
+                    'weak': weak_list,
+                })
+            if not history_items or matched_student is None:
+                raise ValueError('未找到该学生的考试档案记录。')
+            stu_name = matched_student.get('name', name_q)
+            related_notes = []
+            for nr in note_rows:
+                txt = nr['text'] or ''
+                if (nr['exam_id'] in matched_exam_ids and (nr['class_name'] in matched_classes or not nr['class_name'])) or (stu_name and stu_name in txt):
+                    related_notes.append({
+                        'id': nr['id'],
+                        'exam_id': nr['exam_id'],
+                        'class': nr['class_name'],
+                        'text': txt,
+                        'created_at': nr['created_at'],
+                        'mentions_student': bool(stu_name and stu_name in txt),
+                    })
+            first_pr = history_items[0].get('pr')
+            last_pr = history_items[-1].get('pr')
+            pr_delta = round(last_pr - first_pr, 1) if (len(history_items) >= 2 and first_pr is not None and last_pr is not None) else None
+            persistent_weak = [
+                {'subject': sub, 'hits': cnt, 'total_exams': len(history_items)}
+                for sub, cnt in sorted(weak_counter.items(), key=lambda kv: (-kv[1], kv[0]))
+                if cnt >= 2 or len(history_items) == 1
+            ][:4]
+            latest = history_items[-1]
+            return self.send(dict(
+                student=dict(
+                    id=matched_student['id'],
+                    name=stu_name,
+                    grade=latest['grade'],
+                    class_name=latest['class'],
+                    identity_reliable=bool(matched_student.get('identity_reliable')),
+                    latest_exam_id=latest['exam_id'],
+                    latest_exam_name=latest['exam_name'],
+                    latest_total=latest['total'],
+                    latest_rank=latest['rank'],
+                    latest_class_rank=latest['class_rank'],
+                    latest_pr=latest['pr'],
+                    latest_t=latest['t_score'],
+                    latest_level=latest['total_level'],
+                    pr_delta=pr_delta,
+                    exam_count=len(history_items),
+                ),
+                history=history_items,
+                persistent_weak=persistent_weak,
+                notes=related_notes[:12],
+            ))
         if path == '/api/teachers':
             exam_id = query.get('exam_id', [''])[0]
             get_exam(exam_id)

@@ -17,7 +17,7 @@
     </a>
     <nav id="navigation" aria-label="主导航"></nav>
     <div class="sidebar-bottom">
-      <a href="/quick.html" class="sidebar-link"><span>快速一次性出表</span><span aria-hidden="true">↗</span></a>
+      <a href="/quick.html" class="sidebar-link"><span>临时试算（不存档）</span><span aria-hidden="true">↗</span></a>
       <button id="shutdown-button" class="text-button sidebar-shutdown" type="button">关闭本机服务</button>
       <p class="sidebar-meta">数据仅存本机 · 每场考试保留来源与口径</p>
     </div>
@@ -40,6 +40,10 @@
         </div>
       </div>
       <div class="topbar-actions">
+        <div class="global-stu-search" id="global-stu-search">
+          <input id="global-student-input" type="search" placeholder="搜学生档案…" autocomplete="off" aria-label="全局搜索学生个人档案">
+          <div id="global-student-results" class="global-stu-dropdown" hidden></div>
+        </div>
         <div id="heading-action"></div>
         <button class="btn secondary small" id="present-button" type="button" data-action="presentation">汇报模式</button>
         <button class="btn primary small" type="button" data-action="open-import">导入成绩</button>

@@ -35,13 +35,13 @@
     }).join('');
     const refLines = [
       { val: highRatio * 100, color: '#3e785f' },
-      { val: mainRatio * 100, color: '#8061b5' },
+      { val: mainRatio * 100, color: '#6f4eb8' },
     ].map(r => `<line x1="${padLeft}" y1="${yFor(r.val)}" x2="${plotRight}" y2="${yFor(r.val)}" stroke="${r.color}" stroke-dasharray="4 4" stroke-opacity="0.35"/>`).join('');
 
     const hDots = hPts.map(([x, y], i) => `<circle cx="${x}" cy="${y}" r="4.5" fill="#fff" stroke="#3e785f" stroke-width="2.5"><title>${e(timeline[i].name)} 前${Math.round(highRatio * 100)}%：${timeline[i].high_count}人（${pctText(timeline[i].high_rate)}）</title></circle><text x="${x}" y="${y + 15}" text-anchor="middle" fill="#3e785f">${n(timeline[i].high_rate, 0)}%</text>`).join('');
-    const mDots = mPts.map(([x, y], i) => `<circle cx="${x}" cy="${y}" r="4.5" fill="#fff" stroke="#8061b5" stroke-width="2.5"><title>${e(timeline[i].name)} 前${Math.round(mainRatio * 100)}%：${timeline[i].main_count}人（${pctText(timeline[i].main_rate)}）</title></circle><text x="${x}" y="${y - 10}" text-anchor="middle" fill="#684792">${n(timeline[i].main_rate, 0)}%</text>`).join('');
+    const mDots = mPts.map(([x, y], i) => `<circle cx="${x}" cy="${y}" r="4.5" fill="#fff" stroke="#6f4eb8" stroke-width="2.5"><title>${e(timeline[i].name)} 前${Math.round(mainRatio * 100)}%：${timeline[i].main_count}人（${pctText(timeline[i].main_rate)}）</title></circle><text x="${x}" y="${y - 10}" text-anchor="middle" fill="#684792">${n(timeline[i].main_rate, 0)}%</text>`).join('');
     const xLabels = timeline.map((item, i) => `<text x="${xFor(i)}" y="${height - 12}" text-anchor="middle">${e(item.name.slice(0, 7))}</text>`).join('');
-    return `<div class="brief-legend"><span><i style="background:#8061b5"></i>前${Math.round(mainRatio * 100)}%占比（虚线为年级均值）</span><span><i style="background:#3e785f"></i>前${Math.round(highRatio * 100)}%占比</span></div><svg class="mini-chart brief-dual-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="历次双线占比趋势">${gridTicks}${refLines}<polyline fill="none" stroke="#8061b5" stroke-width="2.6" points="${mPts.map(p => p.join(',')).join(' ')}"/><polyline fill="none" stroke="#3e785f" stroke-width="2.6" points="${hPts.map(p => p.join(',')).join(' ')}"/>${mDots}${hDots}${xLabels}</svg>`;
+    return `<div class="brief-legend"><span><i style="background:#6f4eb8"></i>前${Math.round(mainRatio * 100)}%占比（虚线为年级均值）</span><span><i style="background:#3e785f"></i>前${Math.round(highRatio * 100)}%占比</span></div><svg class="mini-chart brief-dual-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="历次双线占比趋势">${gridTicks}${refLines}<polyline fill="none" stroke="#6f4eb8" stroke-width="2.6" points="${mPts.map(p => p.join(',')).join(' ')}"/><polyline fill="none" stroke="#3e785f" stroke-width="2.6" points="${hPts.map(p => p.join(',')).join(' ')}"/>${mDots}${hDots}${xLabels}</svg>`;
   }
 
   function actionListTable(brief, tab) {
@@ -51,23 +51,23 @@
       const items = tab === 'high' ? (lists.borderline_high || []) : (lists.borderline_main || []);
       const label = tab === 'high' ? hLabel : mLabel;
       return {
-        title: `${brief.meta.class}班 · 冲${label}临界与单科跛脚名单`,
+        title: `${brief.meta.class}班 · 冲${label}临界与单科短板名单`,
         columns: ['姓名', '总分', '年级名次', `距${label}线差`, '类型', '未达该线学科（缺口分）'],
         rows: items.map(s => [
           s.name,
           s.total,
           s.rank,
           s.score_gap,
-          s.single_lame ? '单科跛脚（速提）' : `${s.missing_subjects.length}科未达`,
+          s.single_lame ? '单科短板（速提）' : `${s.missing_subjects.length}科未达`,
           s.missing_subjects.map(m => `${m.subject}${m.gap != null ? `(-${n(m.gap, 1)})` : '(缺)'}`).join('、') || '各科均已达线',
         ]),
-        note: `${brief.meta.grade} · ${brief.meta.exam_name} · ${brief.meta.class}班 · 按优先单科跛脚、分差由小到大排序`,
+        note: `${brief.meta.grade} · ${brief.meta.exam_name} · ${brief.meta.class}班 · 按优先单科短板、分差由小到大排序`,
       };
     }
     if (tab === 'drop') {
       const items = lists.drop_alerts || [];
       return {
-        title: `${brief.meta.class}班 · 掉出双线失血预警名单`,
+        title: `${brief.meta.class}班 · 中优层流失预警名单`,
         columns: ['姓名', '上次层级', '本次层级', '上次名次', '本次名次', '名次退步', '骤降学科'],
         rows: items.map(s => [
           s.name,
@@ -110,14 +110,14 @@
       ['high', `冲${hLabel}临界 (${(lists.borderline_high || []).length})`],
       ['main', `保冲${mLabel}临界 (${(lists.borderline_main || []).length})`],
       ['mentor', mentorLabel],
-      ['drop', `掉线失血预警 (${(lists.drop_alerts || []).length})`],
+      ['drop', `中优层流失预警 (${(lists.drop_alerts || []).length})`],
       ['weak', `顽固偏科与突围 (${(lists.persistent_weak || []).length} / ${(lists.breakthroughs || []).length})`],
     ];
     let bodyHTML = '';
     if (activeTab === 'high' || activeTab === 'main') {
       const items = activeTab === 'high' ? (lists.borderline_high || []) : (lists.borderline_main || []);
       const label = activeTab === 'high' ? hLabel : mLabel;
-      bodyHTML = items.length ? `<div class="table-wrap"><table><thead><tr><th>姓名</th><th class="number">总分</th><th class="number">年级名次</th><th class="number">距${e(label)}线</th><th>诊断标签</th><th>未达${e(label)}线学科（分差）</th></tr></thead><tbody>${items.map(s => `<tr><td><strong>${e(s.name)}</strong></td><td class="number">${n(s.total)}</td><td class="number">${n(s.rank, 0)}</td><td class="number delta-negative">-${n(s.score_gap)}分</td><td>${s.single_lame ? '<span class="badge warning">单科跛脚 · 优先认领</span>' : `<span class="badge">${s.missing_subjects.length}科待补</span>`}</td><td>${e(s.missing_subjects.map(m => `${m.subject}${m.gap != null ? `(-${n(m.gap, 1)})` : '(缺)'}`).join('、') || '各科均达线')}</td></tr>`).join('')}</tbody></table></div>` : `<p class="muted">当前范围下没有落入冲${e(label)}临界区间的学生。</p>`;
+      bodyHTML = items.length ? `<div class="table-wrap"><table><thead><tr><th>姓名</th><th class="number">总分</th><th class="number">年级名次</th><th class="number">距${e(label)}线</th><th>诊断标签</th><th>未达${e(label)}线学科（分差）</th></tr></thead><tbody>${items.map(s => `<tr><td><strong>${e(s.name)}</strong></td><td class="number">${n(s.total)}</td><td class="number">${n(s.rank, 0)}</td><td class="number delta-negative">-${n(s.score_gap)}分</td><td>${s.single_lame ? '<span class="badge warning">单科短板 · 优先认领</span>' : `<span class="badge">${s.missing_subjects.length}科待补</span>`}</td><td>${e(s.missing_subjects.map(m => `${m.subject}${m.gap != null ? `(-${n(m.gap, 1)})` : '(缺)'}`).join('、') || '各科均达线')}</td></tr>`).join('')}</tbody></table></div>` : `<p class="muted">当前范围下没有落入冲${e(label)}临界区间的学生。</p>`;
     } else if (activeTab === 'mentor') {
       const items = lists.mentor_list || [];
       bodyHTML = !mr
@@ -280,7 +280,7 @@
           <div class="card-box-title">分层盯人与包干名单</div>
           <div><b>冲${e(hL)}临界：</b>${e(bHigh)}</div>
           <div><b>保冲${e(mL)}临界：</b>${e(bMain)}</div>
-          <div><b>掉队失血预警：</b>${e(drops)}</div>
+          <div><b>中优层流失预警：</b>${e(drops)}</div>
           <div><b>连续顽固偏科：</b>${e(pWeak)}</div>
           ${mentorLine}
         </div>
@@ -373,15 +373,19 @@
       .sign-row{display:flex;justify-content:space-between;gap:8px;padding-top:6px;margin-top:auto;font-size:9.5px;color:#5a536e}
 
       @page{size:A4 ${landscape ? 'landscape' : 'portrait'};margin:${landscape ? '8mm 9mm' : '10mm 11mm'}}
+      .p-tag-alert{border:1px solid #992e2e;font-weight:700}
+      .p-tag-warn{border:1px dashed #8a5612;font-weight:650}
+      body.bw-preview .pages-wrap{filter:grayscale(100%) contrast(1.08)}
+      .bw-toggle{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:#4a435e;cursor:pointer;user-select:none}
       @media print{
         body{background:#fff}
         .controls{display:none!important}
-        .pages-wrap{padding:0;display:block}
+        .pages-wrap{padding:0;display:block;filter:none!important}
         .print-page{width:auto;padding:0;margin:0;border-radius:0;box-shadow:none}
       }
     </style></head><body>
       <div class="controls">
-        <div class="controls-left"><button onclick="window.print()">打印 / 存为 PDF</button><small>${e(title)} · 共 ${pagesHTML.length} 份（已按 A4 ${landscape ? '横向' : '纵向'}优化排版与分页）</small></div>
+        <div class="controls-left"><button onclick="window.print()">打印 / 存为 PDF</button><label class="bw-toggle"><input type="checkbox" onchange="document.body.classList.toggle('bw-preview',this.checked)">黑白打印预览</label><small>${e(title)} · 共 ${pagesHTML.length} 份（A4 ${landscape ? '横向' : '纵向'}）</small></div>
         <small>融侨学迹 · 纸面打印预览</small>
       </div>
       <div class="pages-wrap">${pagesHTML.map(p => `<section class="print-page">${p}</section>`).join('')}</div>
@@ -492,7 +496,7 @@
         </div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>学科</th><th>任课教师</th><th class="number">均分（离均差）</th><th class="number">${e(h.high.label)} 达标/集中(贡献差)</th><th class="number">${e(h.main.label)} 达标/集中(贡献差)</th><th>双线诊断</th><th>同师另班对照</th></tr></thead>
+            <thead><tr><th>学科</th><th>任课教师</th><th class="number">均分（离均差）</th><th class="number" title="贡献差 = 该科达标人数 − 总分达标人数；正数说明该科托举总分，负数说明拖累总分">${e(h.high.label)} 达标/集中(贡献差)</th><th class="number" title="贡献差 = 该科达标人数 − 总分达标人数；正数说明该科托举总分，负数说明拖累总分">${e(h.main.label)} 达标/集中(贡献差)</th><th>双线诊断</th><th>同师另班对照</th></tr></thead>
             <tbody>${subjectRows}</tbody>
           </table>
         </div>
@@ -513,7 +517,7 @@
     const studentsHTML = `
       <section class="panel">
         <div class="section-title">
-          <div><h2>现场点名与包干微名单</h2><p>直接定位最易提分的单科跛脚生、老优生失血预警与顽固偏科生</p></div>
+          <div><h2>现场点名与包干微名单</h2><p>直接定位最易提分的单科短板生、中优层流失预警与连续薄弱学科学生</p></div>
           <div class="panel-heading-actions">${btn('复制当前名单', 'copy-brief-list', '', 'secondary small')}${btn('下载 CSV', 'csv-brief-list', '', 'secondary small')}</div>
         </div>
         ${renderActionListsHTML(brief, state.briefListTab || 'high')}

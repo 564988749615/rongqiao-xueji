@@ -80,7 +80,7 @@ def _diagnose_mismatch(
     if main_rate_gap is not None and warn_gap_pct > 0 and main_rate_gap <= -warn_gap_pct:
         return f"达标率偏低（{main_rate_gap:+.1f}%）", "warn"
     if main_conc_rate is not None and main_conc_rate < 65:
-        return "集中偏低·防跛脚", "warn"
+        return "集中偏低·防偏科", "warn"
     return "均衡平稳", "neutral"
 
 
@@ -564,7 +564,7 @@ def build_class_brief(
         elif m_delta_entry <= -3:
             tags.append({"tone": "alert", "text": f"{main_pct_label}较首考减少{m_delta_entry}人"})
             talking_points.append(
-                f"关注大盘走势：{cls}班前{main_pct_label}人数较首考减少 {abs(m_delta_entry)} 人（占比变化{m_rate_delta_entry:+.1f}%），需排查中优层持续失血原因。"
+                f"关注大盘走势：{cls}班前{main_pct_label}人数较首考减少 {abs(m_delta_entry)} 人（占比变化{m_rate_delta_entry:+.1f}%），需排查中优层持续流失原因。"
             )
     if h_delta_prev is not None:
         if h_delta_prev >= 2:
@@ -600,11 +600,11 @@ def build_class_brief(
         parts = []
         if single_lame_high:
             names = "、".join(s["name"] for s in single_lame_high[:4])
-            parts.append(f"冲{high_pct_label}单科跛脚生 {len(single_lame_high)} 人（如 {names}）")
+            parts.append(f"冲{high_pct_label}单科短板生 {len(single_lame_high)} 人（如 {names}）")
         if single_lame_main:
             names = "、".join(s["name"] for s in single_lame_main[:4])
-            parts.append(f"冲{main_pct_label}单科跛脚生 {len(single_lame_main)} 人（如 {names}）")
-        tags.append({"tone": "warn", "text": f"可速提单科跛脚生 {len(single_lame_high) + len(single_lame_main)} 人"})
+            parts.append(f"冲{main_pct_label}单科短板生 {len(single_lame_main)} 人（如 {names}）")
+        tags.append({"tone": "warn", "text": f"可速提单科短板生 {len(single_lame_high) + len(single_lame_main)} 人"})
         talking_points.append("现场派活抓手：" + "；".join(parts) + "，可由对应薄弱科任课老师直接认领面批。")
 
     if not talking_points:
@@ -1159,4 +1159,162 @@ def build_class_brief(
             "leader_top": leader_top_cols,
             "teacher_top": teacher_top_cols,
         },
+    }
+
+
+def build_grade_brief(grade_exams: list[tuple[dict, dict]]) -> dict | None:
+    """Build an executive one-page '本次三件事' brief for a grade's latest exam (vs previous exam if present)."""
+    if not grade_exams:
+        return None
+    curr_info, curr_ana = grade_exams[-1]
+    prev_info, prev_ana = grade_exams[-2] if len(grade_exams) >= 2 else (None, None)
+
+    rules = curr_ana.get("rules") or {}
+    high_ratio = float(rules.get("high_ratio") or 0.20)
+    main_ratio = float(rules.get("main_ratio") or 0.40)
+    border_band = int(rules.get("borderline_band") or 30)
+    high_pct = f"{int(round(high_ratio * 100))}%"
+    main_pct = f"{int(round(main_ratio * 100))}%"
+
+    curr_high = _eval_ratio(curr_ana, high_ratio)
+    curr_main = _eval_ratio(curr_ana, main_ratio)
+    prev_main = _eval_ratio(prev_ana, main_ratio) if prev_ana else None
+    prev_high = _eval_ratio(prev_ana, high_ratio) if prev_ana else None
+
+    # 1. 进步最大 & 退步最大的班 (based on main_ratio rate delta vs previous exam, or curr main_rate if single exam)
+    def _class_rates(ana: dict, ev: dict) -> dict[str, dict]:
+        out = {}
+        by_cls: dict[str, list[dict]] = {}
+        for s in ana["students"]:
+            if s.get("eligible"):
+                by_cls.setdefault(s["class"], []).append(s)
+        for c in ana["classes"]:
+            sts = by_cls.get(c, [])
+            cnt = len(sts)
+            hit = sum(1 for s in sts if s["id"] in ev["elite_ids"])
+            rate = rounded(100.0 * hit / cnt, 1) if cnt else 0.0
+            mean_v = rounded(sum(s["total"] for s in sts) / cnt, 1) if cnt else None
+            out[c] = {"class": c, "count": cnt, "hit": hit, "rate": rate, "mean": mean_v}
+        return out
+
+    curr_cls = _class_rates(curr_ana, curr_main)
+    prev_cls = _class_rates(prev_ana, prev_main) if (prev_ana and prev_main) else {}
+    compared_classes = []
+    for c, item in curr_cls.items():
+        if c in prev_cls and item["count"] > 0 and prev_cls[c]["count"] > 0:
+            compared_classes.append({
+                **item,
+                "prev_rate": prev_cls[c]["rate"],
+                "delta_rate": rounded(item["rate"] - prev_cls[c]["rate"], 1),
+                "delta_hit": item["hit"] - prev_cls[c]["hit"],
+            })
+
+    if compared_classes:
+        best_c = max(compared_classes, key=lambda x: (x["delta_rate"], x["rate"]))
+        lag_c = min(compared_classes, key=lambda x: (x["delta_rate"], x["rate"]))
+        class_mover = {
+            "has_prev": True,
+            "compare_name": prev_info["name"],
+            "ratio_label": main_pct,
+            "best": best_c,
+            "lag": lag_c if lag_c["class"] != best_c["class"] else None,
+        }
+    else:
+        valid_c = [v for v in curr_cls.values() if v["count"] > 0]
+        best_c = max(valid_c, key=lambda x: (x["rate"], x["mean"] or 0)) if valid_c else None
+        lag_c = min(valid_c, key=lambda x: (x["rate"], x["mean"] or 0)) if valid_c else None
+        class_mover = {
+            "has_prev": False,
+            "compare_name": "",
+            "ratio_label": main_pct,
+            "best": best_c,
+            "lag": lag_c if (lag_c and best_c and lag_c["class"] != best_c["class"]) else None,
+        }
+
+    # 2. 最需要会诊的学科 (widest class spread / lowest concentration rate / most lagging classes)
+    sub_candidates = []
+    sub_stats_map = {st["subject"]: st for st in curr_ana.get("subject_stats") or []}
+    for sub in curr_ana.get("subjects") or []:
+        st = sub_stats_map.get(sub) or {}
+        g_mean = st.get("mean")
+        ach_ids = curr_main["subject_achievers"].get(sub, set())
+        conc_cnt = len(ach_ids & curr_main["elite_ids"])
+        ach_cnt = len(ach_ids)
+        conc_rate = rounded(100.0 * conc_cnt / ach_cnt, 1) if ach_cnt else None
+        cls_means = []
+        lag_classes = []
+        for cs in curr_ana.get("class_stats") or []:
+            sm = (cs.get("subjects") or {}).get(sub, {}).get("mean")
+            if sm is not None:
+                cls_means.append((cs["class"], sm))
+                if g_mean is not None and g_mean > 0 and (g_mean - sm) / g_mean >= 0.035:
+                    lag_classes.append((cs["class"], rounded(sm - g_mean, 1)))
+        spread = rounded(max(m for _, m in cls_means) - min(m for _, m in cls_means), 1) if len(cls_means) >= 2 else 0.0
+        rel_spread = (spread / g_mean * 100.0) if (g_mean and g_mean > 0) else 0.0
+        # Priority score: lower concentration rate + more lagging classes + wider relative spread
+        alert_score = (100.0 - (conc_rate if conc_rate is not None else 75.0)) + len(lag_classes) * 6.0 + rel_spread * 0.8
+        lag_classes.sort(key=lambda x: x[1])
+        sub_candidates.append({
+            "subject": sub,
+            "conc_rate": conc_rate,
+            "mean": g_mean,
+            "spread": spread,
+            "weak_class_count": len(lag_classes),
+            "weak_classes": [c for c, _ in lag_classes[:4]],
+            "alert_score": round(alert_score, 2),
+        })
+    subject_alert = max(sub_candidates, key=lambda x: x["alert_score"]) if sub_candidates else None
+
+    # 3. 临界生与单科短板盘面
+    total_subs = list(rules.get("total_subjects") or curr_ana.get("subjects") or [])
+    active_students = [s for s in curr_ana["students"] if s.get("eligible") and s.get("rank") is not None]
+    main_k = curr_main["k"]
+    high_k = curr_high["k"]
+    border_main_ids = set()
+    border_high_ids = set()
+    single_short_ids = set()
+    border_by_class: Counter = Counter()
+
+    for s in active_students:
+        rk = s["rank"]
+        sid = s["id"]
+        in_h = high_k < rk <= high_k + border_band
+        in_m = main_k < rk <= main_k + border_band
+        if in_h:
+            border_high_ids.add(sid)
+            miss = [sub for sub in total_subs if sid not in curr_high["subject_achievers"].get(sub, set())]
+            if len(miss) == 1:
+                single_short_ids.add(sid)
+        if in_m:
+            border_main_ids.add(sid)
+            miss = [sub for sub in total_subs if sid not in curr_main["subject_achievers"].get(sub, set())]
+            if len(miss) == 1:
+                single_short_ids.add(sid)
+        if in_h or in_m:
+            border_by_class[s["class"]] += 1
+
+    top_border_cls = border_by_class.most_common(1)[0] if border_by_class else None
+    borderline_focus = {
+        "high_label": f"前{high_pct}",
+        "main_label": f"前{main_pct}",
+        "high_count": len(curr_high["elite_ids"]),
+        "main_count": len(curr_main["elite_ids"]),
+        "high_delta": (len(curr_high["elite_ids"]) - len(prev_high["elite_ids"])) if prev_high else None,
+        "main_delta": (len(curr_main["elite_ids"]) - len(prev_main["elite_ids"])) if prev_main else None,
+        "borderline_high_count": len(border_high_ids),
+        "borderline_main_count": len(border_main_ids),
+        "borderline_total": len(border_high_ids | border_main_ids),
+        "single_short_count": len(single_short_ids),
+        "top_class": top_border_cls[0] if top_border_cls else (curr_ana["classes"][0] if curr_ana["classes"] else ""),
+        "top_class_count": top_border_cls[1] if top_border_cls else 0,
+    }
+
+    return {
+        "exam_id": curr_info["id"],
+        "exam_name": curr_info["name"],
+        "exam_date": curr_info["date"],
+        "grade": curr_info["grade"],
+        "class_mover": class_mover,
+        "subject_alert": subject_alert,
+        "borderline_focus": borderline_focus,
     }

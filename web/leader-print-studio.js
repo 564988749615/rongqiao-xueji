@@ -19,7 +19,7 @@
     { id: 'M2', name: '双线分学科诊断与同师对比', desc: '任课教师、各科均分、双线达标/集中与贡献差、同师另班对照' },
     { id: 'M3', name: '历次双线走势与人员流动', desc: '历次 20%/40% 双线走势图 + 较上次保尖率、守线率、掉线/突围流动' },
     { id: 'M4', name: '学生较上次对比明细表', desc: 'A4 竖版精简 1 页排全班：本次/上次总分与名次、名次进退、薄弱科、单科波动' },
-    { id: 'M5', name: '分层抓手与包干微名单', desc: '冲尖优临界、保达标临界、掉线失血预警、连续顽固偏科、导师制名单' },
+    { id: 'M5', name: '分层抓手与包干微名单', desc: '冲尖优临界、保达标临界、中优层流失预警、连续薄弱学科、导师制名单' },
     { id: 'M6', name: '历次单科名次段纵向对比', desc: '原模板1：总分与各科历次名次段趋势（可选领导版 50–800 或教师版 200–800）' },
     { id: 'M7', name: '有效分与薄弱科统计矩阵', desc: '原模板2：历次达标集中率 + 本次单科前 100–500 矩阵 + 薄弱学科统计' },
     { id: 'M8', name: '班情会手写纪要与签字栏', desc: '核心定性、整改抓手、包干责任人、下次复盘节点及领导/班主任签字' },
@@ -622,11 +622,11 @@
     const pWeak = (lists.persistent_weak || []).slice(0, 8).map(s => `${s.name}(${s.subject} ${s.hits}/${s.exams_checked}次)`).join('；') || '无';
     const mentor = (lists.mentor_list || []).slice(0, 12).map(s => `${s.name}(#${s.rank}${s.weak?.[0] ? '·' + s.weak[0] : ''})`).join('、') || '无';
     return `<section class="pm-mod pm-avoid">
-      <div class="pm-mod-head"><h3>分层抓手与包干微名单</h3><span>现场点名认领，优先转化单科跛脚与掉线预警学生</span></div>
+      <div class="pm-mod-head"><h3>分层抓手与包干微名单</h3><span>现场点名认领，优先转化单科短板与中优层流失预警学生</span></div>
       <div class="pm-lists-grid">
         <div class="pm-list-item"><b>冲 ${e(hL)} 临界：</b>${e(fmtBorder(lists.borderline_high))}</div>
         <div class="pm-list-item"><b>保冲 ${e(mL)} 临界：</b>${e(fmtBorder(lists.borderline_main))}</div>
-        <div class="pm-list-item"><b>掉线失血预警：</b>${e(drops)}</div>
+        <div class="pm-list-item"><b>中优层流失预警：</b>${e(drops)}</div>
         <div class="pm-list-item"><b>连续顽固偏科：</b>${e(pWeak)}</div>
         ${m.mentor_range ? `<div class="pm-list-item wide"><b>导师制名单（${m.mentor_range[0]}-${m.mentor_range[1]}名，共 ${(lists.mentor_list || []).length} 人）：</b>${e(mentor)}</div>` : ''}
       </div>
@@ -876,10 +876,16 @@
   .pm-note-line { border-bottom: 1px dashed #c8bedc; min-height: 22px; padding-top: 4px; font-size: 9.2px; color: #4f4662; }
   .pm-sign-row { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; font-size: 9.2px; color: #4f4662; }
   .pm-empty { padding: 12px; text-align: center; color: #7e7491; border: 1px dashed #d8d0e8; border-radius: 5px; font-size: 9px; }
+  .pm-table tr.row-alert td:first-child { border-left: 2.5px solid #222; }
+  .pm-badge.alert { border: 1px solid #992e2e; font-weight: 700; }
+  .pm-badge.warn { border: 1px dashed #8a5612; font-weight: 650; }
+  .print-bar-actions { display: flex; align-items: center; gap: 14px; }
+  .bw-toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: #e5dff2; cursor: pointer; user-select: none; }
+  body.bw-preview .print-canvas { filter: grayscale(100%) contrast(1.08); }
   @media print {
     body { background: #fff; }
     .print-bar { display: none; }
-    .print-canvas { padding: 0; gap: 0; display: block; }
+    .print-canvas { padding: 0; gap: 0; display: block; filter: none !important; }
     .pm-class-packet { width: auto; min-height: 0; padding: 0; box-shadow: none; page-break-after: always; break-after: page; }
     .pm-class-packet:last-child { page-break-after: auto; break-after: auto; }
   }
@@ -887,7 +893,10 @@
 <body>
   <div class="print-bar">
     <span>${e(title)} · 已选模块：${activeIds.join(' · ')}</span>
-    <button type="button" onclick="window.print()">打印 / 另存为 PDF</button>
+    <div class="print-bar-actions">
+      <label class="bw-toggle"><input type="checkbox" onchange="document.body.classList.toggle('bw-preview',this.checked)">黑白打印预览</label>
+      <button type="button" onclick="window.print()">打印 / 另存为 PDF</button>
+    </div>
   </div>
   <div class="print-canvas">${list.map(b => renderClassPacket(b, cfg)).join('')}</div>
 </body></html>`;

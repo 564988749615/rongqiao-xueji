@@ -484,6 +484,68 @@ class PMUpgradesTest(unittest.TestCase):
         with zipfile.ZipFile(io.BytesIO(pkg_bytes)) as zf:
             self.assertIn('01班/01班_ABC等级表(按姓氏).xlsx', zf.namelist())
 
+    def test_grade_brief_and_global_student_profile(self):
+        """Phase 1: Grade one-page '本次三件事' brief + global student search & longitudinal profile."""
+        from urllib.parse import quote
+
+        content = base64.b64encode(_make_multi_xlsx()).decode('ascii')
+        inspected = self._post('/api/workbook/inspect', {
+            'filename': '总表.xlsx',
+            'content': content,
+            'grade': '初三',
+            'default_date': '2026-10-01',
+        })
+        s1, s2 = inspected['score_sheets'][0], inspected['score_sheets'][1]
+        commit_res = self._post('/api/exams/batch-import', {
+            'grade': '初三',
+            'exams': [
+                {'dataset': s1['dataset'], 'name': s1['exam_name'], 'date': s1['exam_date'], 'mode': 'create'},
+                {
+                    'dataset': s2['dataset'],
+                    'name': s2['exam_name'],
+                    'date': s2['exam_date'],
+                    'mode': 'create',
+                    'name_fixes': s2['hygiene']['typo_candidates'],
+                },
+            ],
+            'teacher_sheets': [{'parsed': inspected['teacher_sheets'][0]['parsed']}],
+        })
+        latest_exam_id = commit_res['exam_ids'][-1]
+
+        # Add a teaching note mentioning 张锋
+        self._post('/api/notes', {'exam_id': latest_exam_id, 'class': '01', 'text': '【张锋】数学压轴题发挥出色，语文继续巩固阅读。'})
+
+        # 1. /api/school includes grade_brief ('本次三件事')
+        school_raw, _ = self._get('/api/school')
+        school = json.loads(school_raw.decode('utf-8'))
+        self.assertEqual(len(school['grades']), 1)
+        gb = school['grades'][0].get('grade_brief')
+        self.assertIsNotNone(gb)
+        self.assertTrue(gb['class_mover']['has_prev'])
+        self.assertIsNotNone(gb['class_mover']['best'])
+        self.assertIsNotNone(gb['subject_alert'])
+        self.assertIn('subject', gb['subject_alert'])
+        self.assertIn('borderline_total', gb['borderline_focus'])
+
+        # 2. /api/students/search finds 张锋 deduplicated across 2 exams
+        search_raw, _ = self._get('/api/students/search?q=' + quote('张锋'))
+        search_res = json.loads(search_raw.decode('utf-8'))
+        self.assertEqual(len(search_res['results']), 1)
+        hit = search_res['results'][0]
+        self.assertEqual(hit['name'], '张锋')
+        self.assertEqual(hit['exam_count'], 2)
+
+        # 3. /api/students/profile returns full longitudinal trajectory + related note
+        prof_raw, _ = self._get(
+            f"/api/students/profile?grade={quote(hit['grade'])}&student_id={quote(hit['student_id'])}"
+        )
+        prof = json.loads(prof_raw.decode('utf-8'))
+        self.assertEqual(prof['student']['name'], '张锋')
+        self.assertEqual(len(prof['history']), 2)
+        self.assertIsNotNone(prof['history'][0]['pr'])
+        self.assertIsNotNone(prof['history'][0]['t_score'])
+        self.assertTrue(any('张锋' in n['text'] and n['mentions_student'] for n in prof['notes']))
+
 
 if __name__ == '__main__':
     unittest.main()

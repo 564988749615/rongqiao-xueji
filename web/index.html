@@ -32,26 +32,21 @@
     .resume-meta span { font-size: 12.5px; color: var(--muted); }
     .resume-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
-    .choices { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
-    .choice {
-      display: flex; flex-direction: column; min-height: 268px; padding: 24px 26px;
-      background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg);
-      box-shadow: var(--shadow-sm); transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+    .quick-entry-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 20px; }
+    .quick-entry-card {
+      padding: 18px 20px; background: var(--surface); border: 1px solid var(--line);
+      border-radius: var(--r-md); box-shadow: var(--shadow-sm);
     }
-    .choice:hover { border-color: var(--line-strong); box-shadow: 0 6px 20px rgba(26, 20, 44, 0.06); }
-    .choice.featured { background: linear-gradient(160deg, var(--primary-soft) 0%, var(--surface) 58%); border-color: var(--line-strong); }
-    .choice-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
-    .choice .symbol {
-      width: 42px; height: 42px; border-radius: var(--r-md); display: grid; place-items: center;
-      background: var(--primary-soft); color: var(--primary-dark);
+    .quick-entry-card h3 { font-size: 15px; margin: 0 0 6px; color: var(--ink); }
+    .quick-entry-card p { font-size: 13px; color: var(--ink-secondary); line-height: 1.65; margin: 0; }
+    .primary-entry-card {
+      padding: 26px 28px; background: linear-gradient(155deg, var(--primary-soft) 0%, var(--surface) 62%);
+      border: 1px solid var(--line-strong); border-radius: var(--r-lg); box-shadow: var(--shadow-sm);
+      display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap;
     }
-    .choice.featured .symbol { background: var(--primary); color: #ffffff; }
-    .choice .symbol svg { width: 22px; height: 22px; }
-    .choice h2 { font-size: 20px; margin: 0 0 8px; color: var(--ink); }
-    .choice p { color: var(--ink-secondary); font-size: 14px; line-height: 1.7; margin: 0 0 18px; }
-    .choice-points { list-style: none; padding: 0; margin: 0 0 22px; display: grid; gap: 5px; font-size: 12.5px; color: var(--muted); }
-    .choice-points li::before { content: "·"; color: var(--primary); font-weight: 700; margin-right: 6px; }
-    .choice .btn { align-self: flex-start; margin-top: auto; }
+    .primary-entry-card h2 { font-size: 20px; margin: 0 0 6px; color: var(--ink); }
+    .primary-entry-card p { font-size: 14px; color: var(--ink-secondary); margin: 0; max-width: 560px; line-height: 1.65; }
+    .primary-entry-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 
     .home-footer {
       display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap;
@@ -70,8 +65,8 @@
       .home { padding: 20px 16px 36px; }
       .home-head { margin-bottom: 24px; }
       .home-hero h1 { font-size: 26px; }
-      .choices { grid-template-columns: 1fr; }
-      .choice { min-height: auto; padding: 20px; }
+      .quick-entry-grid { grid-template-columns: 1fr; }
+      .primary-entry-card { padding: 20px; }
     }
   </style>
 </head>
@@ -97,44 +92,41 @@
         <span id="resume-sub"></span>
       </div>
       <div class="resume-actions">
-        <a id="resume-brief" class="btn primary" href="/leader.html?view=brief">直接看班情分析 →</a>
+        <a id="resume-overview" class="btn primary" href="/leader.html?view=overview">年级一页简报 →</a>
+        <a id="resume-brief" class="btn secondary" href="/leader.html?view=brief">班情分析</a>
         <a id="resume-abc" class="btn secondary" href="/leader.html?view=brief&action=abc">导出各班 ABC 表</a>
-        <a id="resume-compare" class="btn secondary" href="/leader.html?view=compare">班级与学科对比</a>
+        <a class="btn quiet" href="/leader.html?view=data">导入新考试</a>
       </div>
     </section>
 
-    <div class="choices">
-      <section class="choice featured">
-        <div class="choice-head">
-          <div class="symbol" id="leader-icon"></div>
-          <span class="badge">日常主工作台</span>
-        </div>
-        <h2>考试档案与班情分析</h2>
-        <p>持续沉淀历次考试，开展 20%/40% 双线班情诊断、任课教师对照、学生历次成长追踪与一页纸套打。</p>
-        <ul class="choice-points">
-          <li>支持自定义全校默认口径与同年级一键同步</li>
-          <li>直出领导谈话卡、领导版 50–800 与教师版 200–800 打印稿</li>
-        </ul>
-        <a class="btn primary" href="/leader.html">进入考试档案 <span aria-hidden="true">→</span></a>
-      </section>
+    <section id="first-entry" class="primary-entry-card">
+      <div>
+        <h2>统一工作台 · 导入即分析，按需建档</h2>
+        <p>直接导入单场或一表多考 Excel，自动生成年级一页简报、双线班情诊断、学生个人成长档案、姓氏排序 ABC 表与分模块打印册。</p>
+      </div>
+      <div class="primary-entry-actions">
+        <a class="btn primary" href="/leader.html">进入学业分析工作台 <span aria-hidden="true">→</span></a>
+        <a class="btn secondary" href="/leader.html?view=data">导入考试成绩</a>
+      </div>
+    </section>
 
-      <section class="choice">
-        <div class="choice-head">
-          <div class="symbol" id="quick-icon"></div>
-          <span class="badge">临时单次核算</span>
-        </div>
-        <h2>快速一次性出表</h2>
-        <p>无需先建档案，拖入单张 Excel/CSV 即刻生成排名、自定义等级、有效分、前 N 名与薄弱学科，一键复制或打印。</p>
-        <ul class="choice-points">
-          <li>支持临时试算与自定义等级比例，不污染长期档案</li>
-          <li>确认满意后可一键“保存到全校平台”</li>
-        </ul>
-        <a class="btn secondary" href="/quick.html">进入快速出表 <span aria-hidden="true">→</span></a>
-      </section>
+    <div class="quick-entry-grid">
+      <div class="quick-entry-card">
+        <h3>年级一页简报与班情诊断</h3>
+        <p>考后自动提炼进退最明显的班、最需会诊的学科与临界生变化，一键钻取到班情与学科明细。</p>
+      </div>
+      <div class="quick-entry-card">
+        <h3>全局学生搜索与个人档案</h3>
+        <p>顶部直接搜学生姓名，直达历次年级百分位轨迹、连续薄弱学科、教研记录与家长诊断卡。</p>
+      </div>
+      <div class="quick-entry-card">
+        <h3>按班 ABC 表与分版打印</h3>
+        <p>一键导出按姓氏拼音排序的各班 A/B/C 或 A1–C2 等级表，以及领导/教师分模块 A4 打印册。</p>
+      </div>
     </div>
 
     <footer class="home-footer">
-      <span>数据与分析保存在这台电脑 · 两个入口共用同一套可自定义计算口径</span>
+      <span>所有数据仅保存在本机 · <a href="/quick.html" style="color:var(--primary-dark)">只需临时算一次不存档？打开临时试算 →</a></span>
       <div class="footer-links">
         <a href="/help.html">使用说明与计算口径</a>
         <button id="shutdown-button" class="shutdown-link" type="button">关闭本机服务</button>
@@ -143,8 +135,6 @@
   </main>
   <script src="/common.js"></script>
   <script>
-    document.getElementById('quick-icon').innerHTML = Z.icons('file');
-    document.getElementById('leader-icon').innerHTML = Z.icons('chart');
     const statusText = document.querySelector('#status span');
     Z.api('/api/health')
       .then(() => {
@@ -158,10 +148,11 @@
         document.getElementById('resume-kicker').textContent = `已保存 ${exams.length} 场考试档案 · 最近一场`;
         document.getElementById('resume-title').textContent = `${latest.grade} · ${latest.name}`;
         document.getElementById('resume-sub').textContent = `考试日期 ${latest.date} · ${latest.row_count} 条记录 · ${latest.subject_count} 个学科`;
+        document.getElementById('resume-overview').href = `/leader.html?exam=${encodeURIComponent(latest.id)}&view=overview`;
         document.getElementById('resume-brief').href = `/leader.html?exam=${encodeURIComponent(latest.id)}&view=brief`;
         document.getElementById('resume-abc').href = `/leader.html?exam=${encodeURIComponent(latest.id)}&view=brief&action=abc`;
-        document.getElementById('resume-compare').href = `/leader.html?exam=${encodeURIComponent(latest.id)}&view=compare`;
         document.getElementById('resume-bar').hidden = false;
+        document.getElementById('first-entry').hidden = true;
       })
       .catch(err => { statusText.textContent = err.message; });
     Z.bindShutdown(document.getElementById('shutdown-button'), statusText);
