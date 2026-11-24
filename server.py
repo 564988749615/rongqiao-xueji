@@ -271,31 +271,39 @@ def _build_backup_dict() -> dict:
                 archived=bool(r['archived']),
                 created_at=r['created_at'],
                 updated_at=r['updated_at'],
+                edit_count=int(r['edit_count'] or 0),
+                data_version=int(r['data_version'] or 1),
+                published_at=str(r['published_at'] or ''),
             )
             for r in conn.execute('SELECT * FROM exams')
         ]
         notes = [dict(r) for r in conn.execute('SELECT * FROM notes')]
         teachers = [dict(r) for r in conn.execute('SELECT * FROM teachers')]
+        score_edits = [dict(r) for r in conn.execute('SELECT * FROM score_edits ORDER BY created_at, rowid')]
         def_row = conn.execute("SELECT updated_at FROM settings WHERE key='default_rules'").fetchone()
     return dict(
         format='zhixu-backup',
-        version=1,
+        version=2,
         exported_at=now(),
         exams=exams,
         notes=notes,
         teachers=teachers,
+        score_edits=score_edits,
         default_rules=get_default_rules(),
         default_rules_updated_at=def_row['updated_at'] if def_row else '',
     )
 
 
 def _validate_backup_payload(backup: dict) -> tuple[list, list]:
-    if not isinstance(backup, dict) or backup.get('format') != 'zhixu-backup' or backup.get('version') != 1:
+    if not isinstance(backup, dict) or backup.get('format') != 'zhixu-backup' or backup.get('version') not in (1, 2):
         raise ValueError('这不是本软件支持的备份文件。')
     exams = backup.get('exams', [])
     notes = backup.get('notes', [])
     if not isinstance(exams, list) or len(exams) > 2000 or not isinstance(notes, list) or len(notes) > 50000:
         raise ValueError('备份记录格式或数量不正确。')
+    score_edits = backup.get('score_edits', [])
+    if not isinstance(score_edits, list) or len(score_edits) > 200000:
+        raise ValueError('备份中的成绩更正记录格式不正确。')
     return exams, notes
 
 
@@ -460,21 +468,27 @@ def _restore_backup_dict(backup: dict, *, mode: str = 'append_only') -> dict:
     notes_updated = 0
     teachers_added = 0
     teachers_updated = 0
+    score_edits_added = 0
+    score_edits_updated = 0
     default_rules_updated = False
     timestamp = now()
+    touched_exam_ids: set[str] = set()
 
     with db() as conn:
         for item in exams:
             created = item.get('created_at', timestamp)
             cloud_upd = str(item.get('updated_at') or created)
             meta = _dataset_meta(item['dataset'], created)
-            existing = conn.execute('SELECT updated_at, created_at FROM exams WHERE id=?', (item['id'],)).fetchone()
+            inc_ver = max(1, int(item.get('data_version') or 1))
+            inc_pub = str(item.get('published_at') or '')
+            existing = conn.execute('SELECT updated_at, created_at, data_version FROM exams WHERE id=?', (item['id'],)).fetchone()
             if existing is None:
                 conn.execute(
                     '''INSERT INTO exams(
                          id, dataset, rules, archived, created_at, updated_at,
-                         name, grade, exam_date, filename, imported_at, row_count, subject_count
-                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                         name, grade, exam_date, filename, imported_at, row_count, subject_count,
+                         edit_count, data_version, published_at
+                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)''',
                     (
                         item['id'],
                         encode(item['dataset']),
@@ -483,16 +497,20 @@ def _restore_backup_dict(backup: dict, *, mode: str = 'append_only') -> dict:
                         created,
                         cloud_upd,
                         *meta,
+                        inc_ver,
+                        inc_pub,
                     ),
                 )
                 exams_added += 1
             elif smart:
                 loc_upd = str(existing['updated_at'] or existing['created_at'] or '')
                 if not loc_upd or cloud_upd > loc_upd:
+                    next_ver = max(int(existing['data_version'] or 1), inc_ver)
                     conn.execute(
                         '''UPDATE exams SET
                              dataset=?, rules=?, archived=?, updated_at=?,
-                             name=?, grade=?, exam_date=?, filename=?, imported_at=?, row_count=?, subject_count=?
+                             name=?, grade=?, exam_date=?, filename=?, imported_at=?, row_count=?, subject_count=?,
+                             data_version=?, published_at=?
                            WHERE id=?''',
                         (
                             encode(item['dataset']),
@@ -500,6 +518,8 @@ def _restore_backup_dict(backup: dict, *, mode: str = 'append_only') -> dict:
                             int(bool(item.get('archived'))),
                             cloud_upd,
                             *meta,
+                            next_ver,
+                            inc_pub,
                             item['id'],
                         ),
                     )
@@ -553,6 +573,51 @@ def _restore_backup_dict(backup: dict, *, mode: str = 'append_only') -> dict:
                 )
                 teachers_updated += 1
 
+        for item in backup.get('score_edits', []) or []:
+            if not isinstance(item, dict) or not item.get('id') or not item.get('exam_id'):
+                continue
+            eid = str(item['exam_id'])
+            if not conn.execute('SELECT 1 FROM exams WHERE id=?', (eid,)).fetchone():
+                continue
+            existing_e = conn.execute('SELECT id, revoked_at FROM score_edits WHERE id=?', (str(item['id']),)).fetchone()
+            inc_rev = item.get('revoked_at') or None
+            if existing_e is None:
+                conn.execute(
+                    '''INSERT INTO score_edits(
+                         id, exam_id, row_id, source_row, subject, old_value, new_value,
+                         reason, editor, batch_id, created_at, revoked_at
+                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)''',
+                    (
+                        str(item['id']),
+                        eid,
+                        str(item.get('row_id') or ''),
+                        item.get('source_row'),
+                        str(item.get('subject') or ''),
+                        item.get('old_value'),
+                        item.get('new_value'),
+                        str(item.get('reason') or '同步恢复')[:200],
+                        str(item.get('editor') or '')[:80],
+                        str(item.get('batch_id') or ''),
+                        str(item.get('created_at') or timestamp),
+                        inc_rev,
+                    ),
+                )
+                score_edits_added += 1
+                touched_exam_ids.add(eid)
+            elif smart and inc_rev and not existing_e['revoked_at']:
+                conn.execute('UPDATE score_edits SET revoked_at=? WHERE id=?', (str(inc_rev), str(item['id'])))
+                score_edits_updated += 1
+                touched_exam_ids.add(eid)
+
+        for eid in touched_exam_ids:
+            new_cnt = _recount_active_edits(conn, eid)
+            cur = conn.execute('SELECT data_version FROM exams WHERE id=?', (eid,)).fetchone()
+            cur_ver = int(cur['data_version'] or 1) if cur else 1
+            conn.execute(
+                'UPDATE exams SET edit_count=?, data_version=?, updated_at=? WHERE id=?',
+                (new_cnt, cur_ver + 1, timestamp, eid),
+            )
+
         if isinstance(backup.get('default_rules'), dict) and backup['default_rules']:
             cleaned_def = validate_portable_rules(backup['default_rules'])
             cloud_def_upd = str(backup.get('default_rules_updated_at') or backup.get('exported_at') or timestamp)
@@ -579,6 +644,8 @@ def _restore_backup_dict(backup: dict, *, mode: str = 'append_only') -> dict:
         notes_updated=notes_updated,
         teachers_added=teachers_added,
         teachers_updated=teachers_updated,
+        score_edits_added=score_edits_added,
+        score_edits_updated=score_edits_updated,
         default_rules_updated=default_rules_updated,
     )
 

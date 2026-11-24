@@ -318,5 +318,77 @@ class Task3SaveListRevokeTests(ScoreEditsBaseTest):
         self.assertIn('归档', msg)
 
 
+class Task4BackupSyncTests(ScoreEditsBaseTest):
+    def test_backup_restore_v1_compat_and_smart_merge_score_edits(self):
+        ds = _sample_dataset('exam-bk-1', '初三备份测', '2026-10-15')
+        self._post('/api/exams', {'dataset': ds})
+        self._post(f"/api/exams/{ds['id']}/scores", {
+            'edits': [{'row_id': 'student:102', 'subject': '数学', 'value': 142}],
+            'reason': '复核更正A',
+        })
+        ana_expected = self._post('/api/analyze', {'exam_id': ds['id']})
+        backup = self._get_json('/api/backup')
+        self.assertEqual(backup['version'], 2)
+        self.assertEqual(len(backup['score_edits']), 1)
+
+        # 1. Restore into a brand-new empty data dir
+        with tempfile.TemporaryDirectory() as fresh_dir:
+            prev_data = server.DATA
+            server.DATA = Path(fresh_dir)
+            try:
+                server.init_db()
+                self._post('/api/restore', {'backup': backup, 'mode': 'smart_merge'})
+                ana_restored = self._post('/api/analyze', {'exam_id': ds['id']})
+                self.assertEqual(ana_restored['students'], ana_expected['students'])
+                edits_restored = self._get_json(f"/api/exams/{ds['id']}/scores/edits")
+                self.assertEqual(edits_restored['edit_count'], 1)
+
+                # 2. Restore a v1 backup lacking score_edits -> succeeds cleanly
+                v1_backup = {k: v for k, v in backup.items() if k != 'score_edits'}
+                v1_backup['version'] = 1
+                self._post('/api/restore', {'backup': v1_backup, 'mode': 'append_only'})
+
+                # 3. Side B edits another student (student:101), while Side A revokes student:102's edit
+                self._post(f"/api/exams/{ds['id']}/scores", {
+                    'edits': [{'row_id': 'student:101', 'subject': '语文', 'value': 125}],
+                    'reason': '机器B更正',
+                })
+                # Build cloud snapshot where edit_A is revoked AND edit_C exists on student:103
+                edit_a = dict(backup['score_edits'][0])
+                edit_a['revoked_at'] = '2026-10-17T08:00:00Z'
+                edit_c = {
+                    'id': 'edit-cloud-c',
+                    'exam_id': ds['id'],
+                    'row_id': 'student:103',
+                    'source_row': 4,
+                    'subject': '英语',
+                    'old_value': 102.0,
+                    'new_value': 119.0,
+                    'reason': '机器A更正',
+                    'editor': '',
+                    'batch_id': 'batch-c',
+                    'created_at': '2026-10-17T08:01:00Z',
+                    'revoked_at': None,
+                }
+                cloud_snap = dict(backup)
+                cloud_snap['score_edits'] = [edit_a, edit_c]
+                self._post('/api/restore', {'backup': cloud_snap, 'mode': 'smart_merge'})
+
+                merged_edits = self._get_json(f"/api/exams/{ds['id']}/scores/edits")
+                by_id = {x['id']: x for x in merged_edits['edits']}
+                self.assertIsNotNone(by_id[edit_a['id']]['revoked_at'])
+                self.assertIn('edit-cloud-c', by_id)
+                self.assertEqual(merged_edits['edit_count'], 2)
+
+                ana_merged = self._post('/api/analyze', {'exam_id': ds['id']})
+                by_stu = {s['id']: s for s in ana_merged['students']}
+                self.assertEqual(by_stu['student:102']['scores']['数学'], 118)   # revoked -> back to raw
+                self.assertEqual(by_stu['student:101']['scores']['语文'], 125.0) # local edit kept
+                self.assertEqual(by_stu['student:103']['scores']['英语'], 119.0) # cloud edit merged
+            finally:
+                server.DATA = prev_data
+                server.invalidate_cache()
+
+
 if __name__ == '__main__':
     unittest.main()
