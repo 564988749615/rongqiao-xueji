@@ -149,5 +149,63 @@ class Task1EffectiveDatasetTests(ScoreEditsBaseTest):
         self.assertEqual(next(r for r in detail['effective_dataset']['rows'] if r['id'] == 'student:102')['scores']['数学'], 126.0)
 
 
+class Task2PreviewTests(ScoreEditsBaseTest):
+    def test_preview_diffs_cutoffs_non_mutating_and_validation(self):
+        ds1 = _sample_dataset('exam-prev-1', '初三一测', '2026-09-15')
+        ds2 = _sample_dataset('exam-prev-2', '初三二测', '2026-10-15')
+        self._post('/api/exams', {'dataset': ds1})
+        self._post('/api/exams', {'dataset': ds2, 'rules': {'full_marks': {'数学': 150}}})
+
+        with server.db() as conn:
+            before_row = conn.execute('SELECT updated_at, data_version FROM exams WHERE id=?', (ds2['id'],)).fetchone()
+
+        # Raise 李二 (student:102, total 333 -> 363) above 赵四 (355) & 张一 (345) — shifts rank AND 30% cutoff!
+        preview = self._post(f"/api/exams/{ds2['id']}/scores/preview", {
+            'edits': [{'row_id': 'student:102', 'subject': '数学', 'value': 148}],
+        })
+        self.assertTrue(preview['students'])
+        first_stu = preview['students'][0]
+        self.assertEqual(first_stu['row_id'], 'student:102')
+        self.assertTrue(first_stu['edited'])
+        self.assertEqual(first_stu['diff']['scores.数学'], [118, 148.0])
+        self.assertEqual(first_stu['diff']['total'], [333.0, 363.0])
+        self.assertEqual(first_stu['diff']['rank'], [3, 1])
+        self.assertGreater(preview['summary']['cutoffs_changed'], 0)
+        self.assertIn('总分', preview['cutoffs'])
+        self.assertNotEqual(preview['cutoffs']['总分'][0], preview['cutoffs']['总分'][1])
+        self.assertTrue(any('历次' in w for w in preview['warnings']))
+
+        # Ensure DB was NOT mutated
+        with server.db() as conn:
+            after_row = conn.execute('SELECT updated_at, data_version FROM exams WHERE id=?', (ds2['id'],)).fetchone()
+        self.assertEqual(before_row['updated_at'], after_row['updated_at'])
+        self.assertEqual(before_row['data_version'], after_row['data_version'])
+
+        # Validation errors (Chinese messages)
+        code, msg = self._post_expect_error(f"/api/exams/{ds2['id']}/scores/preview", {
+            'edits': [{'row_id': 'student:102', 'subject': '数学', 'value': 151}],
+        })
+        self.assertEqual(code, 400)
+        self.assertIn('满分', msg)
+
+        code, msg = self._post_expect_error(f"/api/exams/{ds2['id']}/scores/preview", {
+            'edits': [{'row_id': 'student:102', 'subject': '数学', 'value': -5}],
+        })
+        self.assertEqual(code, 400)
+        self.assertIn('不能小于 0', msg)
+
+        code, msg = self._post_expect_error(f"/api/exams/{ds2['id']}/scores/preview", {
+            'edits': [{'row_id': 'student:102', 'subject': '物理', 'value': 80}],
+        })
+        self.assertEqual(code, 400)
+        self.assertIn('不存在', msg)
+
+        code, msg = self._post_expect_error(f"/api/exams/{ds2['id']}/scores/preview", {
+            'edits': [{'row_id': 'student:999', 'subject': '数学', 'value': 100}],
+        })
+        self.assertEqual(code, 400)
+        self.assertIn('找不到', msg)
+
+
 if __name__ == '__main__':
     unittest.main()

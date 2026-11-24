@@ -6,8 +6,10 @@ import base64
 import binascii
 from collections import OrderedDict
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import math
 import mimetypes
 import os
 from pathlib import Path
@@ -718,6 +720,220 @@ def _recount_active_edits(conn: sqlite3.Connection, exam_id: str) -> int:
         (exam_id,),
     ).fetchone()
     return int(row['cnt']) if row else 0
+
+
+def _validate_score_value(value, subject: str, full_marks: dict) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError(f'「{subject}」成绩必须为数字或留空（缺考）。')
+    if isinstance(value, str):
+        text = value.strip()
+        if not text or text in {'缺考', '缺', '-', '—', 'null', 'None'}:
+            return None
+        try:
+            dec = Decimal(text)
+        except InvalidOperation:
+            raise ValueError(f'「{subject}」成绩格式不正确，请输入数字或留空表示缺考。')
+    elif isinstance(value, (int, float)):
+        if not math.isfinite(float(value)):
+            raise ValueError(f'「{subject}」成绩不是有效数字。')
+        dec = Decimal(str(value))
+    else:
+        raise ValueError(f'「{subject}」成绩必须为数字或留空（缺考）。')
+
+    if dec < 0:
+        raise ValueError(f'「{subject}」成绩不能小于 0。')
+    # Check at most 1 decimal place
+    if dec.as_tuple().exponent < -1 and (dec * 10) != int(dec * 10):
+        raise ValueError(f'「{subject}」成绩最多保留 1 位小数。')
+    num_val = float(dec)
+    max_mark = full_marks.get(subject)
+    if max_mark is not None:
+        if num_val > float(max_mark):
+            raise ValueError(f'「{subject}」成绩 {num_val:g} 超过所设满分 {max_mark:g}。')
+    elif num_val > 1000:
+        raise ValueError(f'「{subject}」成绩 {num_val:g} 超过上限 1000 分。')
+    return num_val
+
+
+def _validate_score_edit_items(raw_edits, eff_ds: dict, rules: dict) -> list[dict]:
+    if not isinstance(raw_edits, list) or not raw_edits:
+        raise ValueError('请至少提供一条成绩修改。')
+    if len(raw_edits) > 500:
+        raise ValueError('单次最多修改 500 条成绩记录。')
+    subjects = set(eff_ds.get('subjects') or [])
+    rows_by_id = {r['id']: r for r in eff_ds.get('rows') or []}
+    full_marks = (rules or {}).get('full_marks') or {}
+    deduped: OrderedDict[tuple[str, str], dict] = OrderedDict()
+    for item in raw_edits:
+        if not isinstance(item, dict):
+            raise ValueError('成绩修改项格式不正确。')
+        row_id = str(item.get('row_id') or '').strip()
+        subject = str(item.get('subject') or '').strip()
+        if not row_id or row_id not in rows_by_id:
+            raise ValueError(f'找不到对应的学生记录（{row_id or "空"}）。')
+        if not subject or subject not in subjects:
+            raise ValueError(f'科目「{subject or "空"}」在当前考试中不存在。')
+        val = _validate_score_value(item.get('value'), subject, full_marks)
+        stu = rows_by_id[row_id]
+        deduped[(row_id, subject)] = {
+            'row_id': row_id,
+            'source_row': stu.get('source_row'),
+            'subject': subject,
+            'value': val,
+            'old_value': stu['scores'].get(subject),
+        }
+    return list(deduped.values())
+
+
+def _values_equal(a, b) -> bool:
+    if a is None and b is None:
+        return True
+    if a is None or b is None:
+        return False
+    return abs(float(a) - float(b)) < 1e-9
+
+
+def preview_score_edits(
+    conn: sqlite3.Connection,
+    exam_row,
+    raw_edits: list[dict] | None = None,
+    *,
+    revoke_edit_id: str | None = None,
+) -> dict:
+    """Compute non-mutating before/after impact diff of pending score edits or a single revoke."""
+    rules = json.loads(exam_row['rules'])
+    before_ds = effective_dataset(conn, exam_row)
+    edited_row_ids: set[str] = set()
+    edited_subjects: set[str] = set()
+    edited_cells = 0
+
+    if revoke_edit_id:
+        er = conn.execute(
+            'SELECT * FROM score_edits WHERE id=? AND exam_id=?',
+            (revoke_edit_id, exam_row['id']),
+        ).fetchone()
+        if er is None:
+            raise ValueError('找不到这条修改记录。')
+        if er['revoked_at'] is not None:
+            raise ValueError('这条修改记录已经被撤销。')
+        if er['subject'] == '__unlock__':
+            raise ValueError('解锁审计记录不支持撤销。')
+        edited_row_ids.add(er['row_id'])
+        edited_subjects.add(er['subject'])
+        edited_cells = 1
+        after_ds = effective_dataset(conn, exam_row, exclude_edit_id=revoke_edit_id)
+    else:
+        cleaned = _validate_score_edit_items(raw_edits, before_ds, rules)
+        for item in cleaned:
+            edited_row_ids.add(item['row_id'])
+            edited_subjects.add(item['subject'])
+        edited_cells = len(cleaned)
+        after_ds = effective_dataset(conn, exam_row, extra_edits=cleaned)
+
+    before_ana = analyze(before_ds, rules, include_tables=False)
+    after_ana = analyze(after_ds, rules, include_tables=False)
+
+    before_stu = {s['id']: s for s in before_ana['students']}
+    after_stu = {s['id']: s for s in after_ana['students']}
+    students_diff = []
+    rank_changed_cnt = 0
+    grade_changed_cnt = 0
+
+    for sid, ast in after_stu.items():
+        bst = before_stu.get(sid)
+        if bst is None:
+            continue
+        diff: dict[str, list] = {}
+        is_edited = sid in edited_row_ids
+        for sub in edited_subjects:
+            old_sc = bst['scores'].get(sub)
+            new_sc = ast['scores'].get(sub)
+            if not _values_equal(old_sc, new_sc):
+                diff[f'scores.{sub}'] = [old_sc, new_sc]
+        for field in ('total', 'rank', 'class_rank', 'eligible'):
+            if bst.get(field) != ast.get(field):
+                diff[field] = [bst.get(field), ast.get(field)]
+        if bst.get('grades', {}).get('总分') != ast.get('grades', {}).get('总分'):
+            diff['grades.总分'] = [bst.get('grades', {}).get('总分'), ast.get('grades', {}).get('总分')]
+        if bst.get('levels', {}).get('总分') != ast.get('levels', {}).get('总分'):
+            diff['levels.总分'] = [bst.get('levels', {}).get('总分'), ast.get('levels', {}).get('总分')]
+        for sub in edited_subjects:
+            if bst.get('grades', {}).get(sub) != ast.get('grades', {}).get(sub):
+                diff[f'grades.{sub}'] = [bst.get('grades', {}).get(sub), ast.get('grades', {}).get(sub)]
+            if bst.get('levels', {}).get(sub) != ast.get('levels', {}).get(sub):
+                diff[f'levels.{sub}'] = [bst.get('levels', {}).get(sub), ast.get('levels', {}).get(sub)]
+        if diff or is_edited:
+            if 'rank' in diff:
+                rank_changed_cnt += 1
+            if any(k.startswith('grades.') or k.startswith('levels.') for k in diff):
+                grade_changed_cnt += 1
+            students_diff.append({
+                'row_id': sid,
+                'name': ast['name'],
+                'class': ast['class'],
+                'edited': is_edited,
+                'diff': diff,
+            })
+
+    students_diff.sort(key=lambda x: (not x['edited'], not any(k.startswith('grades.') or k.startswith('levels.') for k in x['diff']), x['class'], x['name']))
+
+    cutoffs_diff: dict[str, list] = {}
+    cutoffs_changed = 0
+    for key in ('总分', *after_ana['subjects']):
+        old_c = (before_ana['cutoffs'].get(key) or {}).get('score')
+        new_c = (after_ana['cutoffs'].get(key) or {}).get('score')
+        changed = not _values_equal(old_c, new_c)
+        if changed:
+            cutoffs_changed += 1
+            cutoffs_diff[key] = [old_c, new_c]
+        elif key == '总分':
+            cutoffs_diff[key] = [old_c, new_c]
+
+    before_cls = {c['class']: c for c in before_ana['class_stats']}
+    after_cls = {c['class']: c for c in after_ana['class_stats']}
+    classes_diff = []
+    for cls_name, ac in after_cls.items():
+        bc = before_cls.get(cls_name)
+        if bc is None:
+            continue
+        cdiff = {}
+        for fld in ('elite_count', 'participants', 'mean'):
+            if bc.get(fld) != ac.get(fld):
+                cdiff[fld] = [bc.get(fld), ac.get(fld)]
+        for sub in edited_subjects:
+            bsub = (bc.get('subjects') or {}).get(sub) or {}
+            asub = (ac.get('subjects') or {}).get(sub) or {}
+            for fld in ('achievers', 'concentrated'):
+                if bsub.get(fld) != asub.get(fld):
+                    cdiff[f'{sub}.{fld}'] = [bsub.get(fld), asub.get(fld)]
+        if cdiff:
+            classes_diff.append({'class': cls_name, 'diff': cdiff})
+
+    warnings_list = []
+    summary_info = exam_summary(exam_row)
+    sibling_cnt = conn.execute(
+        'SELECT COUNT(*) AS cnt FROM exams WHERE archived=0 AND grade=? AND id!=?',
+        (summary_info['grade'], exam_row['id']),
+    ).fetchone()['cnt']
+    if sibling_cnt > 0:
+        warnings_list.append('本场考试同年级存在多场考试，保存后历次分析与综合名次也会随之变化。')
+    if cutoffs_changed > 0:
+        warnings_list.append(f'本次修改将引起 {cutoffs_changed} 项有效分分界线变动，请核对达标人数变化。')
+
+    return {
+        'students': students_diff,
+        'cutoffs': cutoffs_diff,
+        'classes': classes_diff,
+        'summary': {
+            'edited_cells': edited_cells,
+            'students_rank_changed': rank_changed_cnt,
+            'students_grade_changed': grade_changed_cnt,
+            'cutoffs_changed': cutoffs_changed,
+        },
+        'warnings': warnings_list,
+    }
 
 
 def get_exam(exam_id: str):
@@ -1448,6 +1664,18 @@ class Handler(BaseHTTPRequestHandler):
                 teachers_updated=teachers_updated,
                 exam_ids=exam_ids,
             ))
+        match_preview = re.fullmatch(r'/api/exams/([^/]+)/scores/preview', path)
+        if match_preview:
+            exam_id = match_preview.group(1)
+            row = get_exam(exam_id)
+            with db() as conn:
+                res = preview_score_edits(
+                    conn,
+                    row,
+                    payload.get('edits'),
+                    revoke_edit_id=str(payload.get('revoke_edit_id') or '').strip() or None,
+                )
+            return self.send(res)
         match = re.fullmatch(r'/api/exams/([^/]+)/(rules|meta|archive|restore|delete)', path)
         if match:
             exam_id, action = match.groups()
