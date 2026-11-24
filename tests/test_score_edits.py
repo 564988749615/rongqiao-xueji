@@ -486,5 +486,27 @@ class Task7VersionStampTests(ScoreEditsBaseTest):
         self.assertEqual(brief['meta']['edit_count'], 1)
 
 
+class Task8QuickEditsSaveTests(ScoreEditsBaseTest):
+    def test_save_exam_with_initial_quick_edits_preserves_raw_dataset(self):
+        ds = _sample_dataset('exam-qk-1', '初三快速出表测', '2026-10-15')
+        saved = self._post('/api/exams', {
+            'dataset': ds,
+            'edits': [{'row_id': 'student:102', 'subject': '数学', 'value': 145}],
+        })
+        self.assertEqual(saved['edit_count'], 1)
+        self.assertEqual(saved['data_version'], 2)
+
+        detail = self._get_json(f"/api/exams/{ds['id']}")
+        self.assertEqual(next(r for r in detail['dataset']['rows'] if r['id'] == 'student:102')['scores']['数学'], 118)
+        self.assertEqual(next(r for r in detail['effective_dataset']['rows'] if r['id'] == 'student:102')['scores']['数学'], 145.0)
+
+        edits = self._get_json(f"/api/exams/{ds['id']}/scores/edits")
+        self.assertEqual(len(edits['edits']), 1)
+        self.assertEqual(edits['edits'][0]['reason'], '快速出表中修改')
+
+        ana = self._post('/api/analyze', {'exam_id': ds['id']})
+        self.assertEqual(next(s for s in ana['students'] if s['id'] == 'student:102')['scores']['数学'], 145.0)
+
+
 if __name__ == '__main__':
     unittest.main()

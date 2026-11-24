@@ -1658,6 +1658,14 @@ class Handler(BaseHTTPRequestHandler):
                 default_rules = get_default_rules()
                 incoming_rules = default_rules or None
             result = analyze(dataset, incoming_rules, include_tables=False)
+            raw_edits = payload.get('edits')
+            cleaned_edits: list[dict] = []
+            if raw_edits:
+                cleaned_edits = [
+                    item
+                    for item in _validate_score_edit_items(raw_edits, dataset, result['rules'])
+                    if not _values_equal(item['old_value'], item['value'])
+                ]
             timestamp = now()
             meta = _dataset_meta(dataset, timestamp)
             with db() as conn:
@@ -1673,6 +1681,35 @@ class Handler(BaseHTTPRequestHandler):
                          row_count=excluded.row_count, subject_count=excluded.subject_count''',
                     (dataset['id'], encode(dataset), encode(result['rules']), timestamp, timestamp, *meta),
                 )
+                if cleaned_edits:
+                    batch_id = uuid.uuid4().hex
+                    for item in cleaned_edits:
+                        conn.execute(
+                            '''INSERT INTO score_edits(
+                                 id, exam_id, row_id, source_row, subject, old_value, new_value,
+                                 reason, editor, batch_id, created_at, revoked_at
+                               ) VALUES(?,?,?,?,?,?,?,?,?,?,?,NULL)''',
+                            (
+                                uuid.uuid4().hex,
+                                dataset['id'],
+                                item['row_id'],
+                                item['source_row'],
+                                item['subject'],
+                                item['old_value'],
+                                item['value'],
+                                '快速出表中修改',
+                                '',
+                                batch_id,
+                                timestamp,
+                            ),
+                        )
+                    new_cnt = _recount_active_edits(conn, dataset['id'])
+                    cur_row = conn.execute('SELECT data_version FROM exams WHERE id=?', (dataset['id'],)).fetchone()
+                    new_ver = int(cur_row['data_version'] or 1) + 1 if cur_row else 2
+                    conn.execute(
+                        'UPDATE exams SET edit_count=?, data_version=?, updated_at=? WHERE id=?',
+                        (new_cnt, new_ver, timestamp, dataset['id']),
+                    )
             invalidate_cache(dataset['id'])
             _trigger_auto_sync('exam')
             return self.send(exam_summary(get_exam(dataset['id'])))

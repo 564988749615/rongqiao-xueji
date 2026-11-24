@@ -280,6 +280,16 @@
   .quick-generate-row .btn { width: 100%; }
   .quick-table-actions { width: 100%; display: grid; grid-template-columns: repeat(3, 1fr); }
 }
+.quick-editable-cell { cursor: pointer; position: relative; }
+.quick-editable-cell:hover { background: var(--primary-soft) !important; }
+.quick-editable-cell.is-edited::after {
+  content: ""; position: absolute; top: 0; right: 0;
+  border-style: solid; border-width: 0 7px 7px 0; border-color: transparent #d97706 transparent transparent;
+}
+.quick-inline-editor { display: inline-flex; align-items: center; gap: 3px; }
+.quick-inline-editor input { width: 58px; padding: 2px 4px; font-size: 12px; border: 1px solid var(--primary); border-radius: 3px; }
+.quick-inline-btn { border: 1px solid var(--line-strong); background: var(--surface); border-radius: 3px; padding: 1px 5px; font-size: 11px; cursor: pointer; }
+.quick-inline-btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
 @media print {
   .quick-topbar, .quick-input-panel, .quick-rules-panel, .quick-intro, .quick-help, .quick-footer, .quick-results-top-actions, .quick-table-toolbar, .quick-table-bottom, .quick-table-tabs, .quick-stale-notice, .quick-save-feedback { display: none !important; }
   .quick-main { padding: 0; max-width: none; }

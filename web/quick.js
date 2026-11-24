@@ -4,7 +4,7 @@
   const $ = (id) => document.getElementById(id);
   const now = new Date();
   const todayText = [now.getFullYear(), String(now.getMonth() + 1).padStart(2, '0'), String(now.getDate()).padStart(2, '0')].join('-');
-  const state = { dataset: null, analysis: null, lastFile: null, busy: false, saving: false, exporting: false, scope: 'all', tab: 'scores', page: 1, pageSize: 30, search: '', tableClass: '', dirty: false, importSerial: 0, analyzeSerial: 0, savedId: null };
+  const state = { dataset: null, analysis: null, edits: {}, lastFile: null, busy: false, saving: false, exporting: false, scope: 'all', tab: 'scores', page: 1, pageSize: 30, search: '', tableClass: '', dirty: false, importSerial: 0, analyzeSerial: 0, savedId: null };
   const SETTINGS_KEY = 'zhixu.quick.settings.v1';
   const tabLabels = { scores: '成绩排名', abc: 'ABC 等级', levels: '六等级', effective: '有效分', class_stats: '班级统计', segments: '前 N 名人数', weak: '薄弱学科', quality: '数据核验', rules: '计算口径' };
   const exportIds = ['workbook-button', 'print-all-button', 'copy-button', 'csv-button', 'print-button', 'save-button'];
@@ -221,6 +221,7 @@
     if (!dataset || !Array.isArray(dataset.rows) || !Array.isArray(dataset.subjects) || !Array.isArray(dataset.classes)) throw new Error('读取结果不完整，请重新选择原始成绩表。');
     state.dataset = dataset;
     state.analysis = null;
+    state.edits = {};
     state.dirty = false;
     state.savedId = null;
     state.tab = 'scores';
@@ -353,6 +354,26 @@
     $('rules-section').querySelectorAll('input,select,button').forEach(element => { element.disabled = locked; });
     ['exam-name', 'exam-grade', 'exam-date', 'file-password'].forEach(id => { $(id).disabled = locked; });
   }
+  function effectiveQuickDataset(base) {
+    const edits = Object.values(state.edits || {});
+    if (!edits.length) return base;
+    const byCell = new Map(edits.map(x => [`${x.row_id}||${x.subject}`, x.value]));
+    return {
+      ...base,
+      rows: base.rows.map(r => {
+        let changedRow = false;
+        const nextScores = { ...r.scores };
+        for (const sub of base.subjects) {
+          const k = `${r.id}||${sub}`;
+          if (byCell.has(k)) {
+            nextScores[sub] = byCell.get(k);
+            changedRow = true;
+          }
+        }
+        return changedRow ? { ...r, scores: nextScores } : r;
+      }),
+    };
+  }
   async function generate() {
     if (!state.dataset || state.busy) return;
     clearError();
@@ -365,16 +386,19 @@
     } catch (error) { showError(error); return; }
     const serial = ++state.analyzeSerial;
     const dataset = { ...state.dataset, ...metadata() };
+    const effectiveDs = effectiveQuickDataset(dataset);
     setBusy(true, '正在计算分析表…');
     formLocked(true);
     const original = $('generate-button').innerHTML;
     $('generate-button').textContent = '正在生成…';
     try {
-      const analysis = await Z.api('/api/analyze', { dataset, rules });
+      const analysis = await Z.api('/api/analyze', { dataset: effectiveDs, rules });
       if (serial !== state.analyzeSerial) return;
       if (!analysis || !Array.isArray(analysis.tables)) throw new Error('分析结果不完整，请重试。');
       state.dataset = dataset;
       state.analysis = analysis;
+      const editCnt = Object.keys(state.edits || {}).length;
+      state.analysis.metadata = { ...(analysis.metadata || {}), data_version: editCnt ? 2 : 1, edit_count: editCnt };
       state.dirty = false;
       state.savedId = null;
       state.page = 1;
@@ -383,10 +407,10 @@
       $('table-search').value = '';
       $('save-feedback').hidden = true;
       $('save-button').textContent = '保存到全校平台';
-      $('rules-feedback').textContent = `已按 ${analysis.classes.length} 个班级、${rules.total_subjects.length} 个总分科目生成。`;
+      $('rules-feedback').textContent = `已按 ${analysis.classes.length} 个班级、${rules.total_subjects.length} 个总分科目生成${editCnt ? `（含 ${editCnt} 处内存修改）` : ''}。`;
       $('results-section').hidden = false;
       $('before-results').hidden = true;
-      $('result-version').textContent = `${analysis.tables.length} 张分析表`;
+      $('result-version').textContent = `${analysis.tables.length} 张分析表${editCnt ? ` · 已改 ${editCnt} 处` : ''}`;
       const s = analysis.summary;
       const totalMark = rules.total_subjects.every(sub => rules.full_marks[sub]) ? rules.total_subjects.reduce((sum, sub) => sum + rules.full_marks[sub], 0) : null;
       $('result-summary').innerHTML = [
@@ -450,7 +474,20 @@
     $('table-container').setAttribute('aria-labelledby', `tab-${state.tab}`);
     if (visibleRows.length) {
       const classes = source.columns.map((c, i) => { const text = /姓名|学科|科目|说明|规则|状态|提示|内容|项目|来源|详情|等级|薄弱/u.test(String(c)); const long = /说明|内容|规则|详情|提示/u.test(String(c)); return (text ? 'quick-text-cell' : '') + (long ? ' quick-long-cell' : ''); });
-      $('table-container').innerHTML = `<table><thead><tr>${source.columns.map((c, i) => `<th scope="col" class="${classes[i]}">${html(c)}</th>`).join('')}</tr></thead><tbody>${visibleRows.map(row => `<tr>${source.columns.map((_, i) => `<td class="${classes[i]}${row[i] == null || row[i] === '' ? ' quick-null' : ''}">${html(displayCell(row[i]))}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+      const canInlineEdit = source.id === 'scores' && Array.isArray(state.analysis?.students);
+      const subjectSet = new Set(state.analysis?.subjects || []);
+      const rowToStudent = canInlineEdit ? new Map(source.rows.map((r, idx) => [r, state.analysis.students[idx]])) : null;
+      $('table-container').innerHTML = `<table><thead><tr>${source.columns.map((c, i) => `<th scope="col" class="${classes[i]}">${html(c)}</th>`).join('')}</tr></thead><tbody>${visibleRows.map(row => {
+        const stu = rowToStudent?.get(row);
+        return `<tr>${source.columns.map((col, i) => {
+          const isSubCol = canInlineEdit && stu && subjectSet.has(col);
+          const editKey = isSubCol ? `${stu.id}||${col}` : '';
+          const editedInfo = editKey ? state.edits[editKey] : null;
+          const extraCls = `${classes[i]}${row[i] == null || row[i] === '' ? ' quick-null' : ''}${isSubCol ? ' quick-editable-cell' : ''}${editedInfo ? ' is-edited' : ''}`;
+          const attrs = isSubCol ? ` data-edit-row="${html(stu.id)}" data-edit-sub="${html(col)}" title="${editedInfo ? `原 ${editedInfo.old_value ?? '缺考'} · 点击可继续修改` : '点击修改该科成绩'}"` : '';
+          return `<td class="${extraCls}"${attrs}>${html(displayCell(row[i]))}</td>`;
+        }).join('')}</tr>`;
+      }).join('')}</tbody></table>`;
     } else {
       const hasFilter = state.tableClass || state.search;
       $('table-container').innerHTML = `<div class="quick-table-empty"><b>${hasFilter ? '没有匹配的记录' : '当前范围没有记录'}</b><span>${hasFilter ? '试试其他班级或关键词。' : '检查原始数据或调整统计范围后重新生成。'}</span>${hasFilter ? '<button type="button" id="clear-table-filters">清除筛选</button>' : ''}</div>`;
@@ -495,7 +532,8 @@
     updateActions();
     $('save-button').textContent = '正在保存…';
     try {
-      const saved = await Z.api('/api/exams', { dataset: state.dataset, rules: state.analysis.rules });
+      const editList = Object.values(state.edits || {}).map(x => ({ row_id: x.row_id, subject: x.subject, value: x.value }));
+      const saved = await Z.api('/api/exams', { dataset: state.dataset, rules: state.analysis.rules, ...(editList.length ? { edits: editList } : {}) });
       if (!saved.id) throw new Error('未收到保存结果，请稍后查看全校平台再重试。');
       const check = await Z.api(`/api/exams/${encodeURIComponent(saved.id)}`);
       if (!check.dataset || check.dataset.id !== state.dataset.id) throw new Error('保存后的读取校验未通过，请到全校平台核对。');
@@ -622,6 +660,39 @@
     });
     $('generate-button').addEventListener('click', generate);
     $('regenerate-button').addEventListener('click', generate);
+    $('table-container').addEventListener('click', event => {
+      const td = event.target.closest('td[data-edit-row]');
+      if (!td || td.querySelector('input') || state.busy) return;
+      const rowId = td.dataset.editRow, subject = td.dataset.editSub;
+      const rawStu = state.dataset?.rows?.find(r => r.id === rowId);
+      const curStu = state.analysis?.students?.find(s => s.id === rowId);
+      if (!rawStu || !curStu) return;
+      const curVal = curStu.scores?.[subject];
+      const rawVal = rawStu.scores?.[subject];
+      td.innerHTML = `<div class="quick-inline-editor"><input type="number" step="0.1" min="0" max="1000" value="${curVal == null ? '' : html(curVal)}" placeholder="缺考"><button type="button" class="quick-inline-btn" data-act="absent" title="设为缺考">缺</button><button type="button" class="quick-inline-btn primary" data-act="ok">✓</button></div>`;
+      const inp = td.querySelector('input');
+      inp.focus(); inp.select();
+      const commit = async (val) => {
+        const key = `${rowId}||${subject}`;
+        const sameAsRaw = (val === null && rawVal == null) || (val !== null && rawVal != null && Math.abs(Number(val) - Number(rawVal)) < 1e-9);
+        if (sameAsRaw) delete state.edits[key];
+        else state.edits[key] = { row_id: rowId, subject, value: val, old_value: rawVal ?? null };
+        await generate();
+      };
+      td.querySelector('[data-act="absent"]').addEventListener('click', e => { e.stopPropagation(); commit(null); });
+      td.querySelector('[data-act="ok"]').addEventListener('click', e => {
+        e.stopPropagation();
+        const txt = inp.value.trim();
+        if (txt === '') return commit(null);
+        const num = Number(txt);
+        if (!Number.isFinite(num) || num < 0 || num > 1000) { Z.notice('请输入 0–1000 之间的有效分数，或留空表示缺考。', true); return; }
+        commit(Math.round(num * 10) / 10);
+      });
+      inp.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); td.querySelector('[data-act="ok"]').click(); }
+        if (e.key === 'Escape') { e.preventDefault(); renderTable(); }
+      });
+    });
     $('table-tabs').addEventListener('click', event => { const b = event.target.closest('[data-table]'); if (b) switchTable(b.dataset.table); });
     $('table-tabs').addEventListener('keydown', event => {
       if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key) || !state.analysis) return;
