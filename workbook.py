@@ -833,3 +833,94 @@ def apply_name_fixes(dataset: dict, fixes: list[dict] | None) -> int:
             row["id"] = new_id
             applied += 1
     return applied
+
+
+def parse_score_edits_file(content: bytes, filename: str) -> list[dict]:
+    """Parse an uploaded score-correction Excel/CSV file into row records."""
+    import csv
+    import io
+    from pathlib import Path
+
+    ext = Path(filename or '').suffix.lower()
+    raw_rows: list[list] = []
+    if ext == '.csv':
+        text = None
+        for enc in ('utf-8-sig', 'utf-8', 'gb18030'):
+            try:
+                text = content.decode(enc)
+                break
+            except UnicodeDecodeError:
+                continue
+        if text is None:
+            raise ValueError('更正表 CSV 编码无法识别，请另存为 UTF-8 或 Excel 后重试。')
+        raw_rows = list(csv.reader(io.StringIO(text)))
+    else:
+        import openpyxl
+        wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True, read_only=True)
+        try:
+            ws = wb.active
+            for row in ws.iter_rows(values_only=True):
+                raw_rows.append(list(row))
+        finally:
+            wb.close()
+
+    if not raw_rows:
+        raise ValueError('更正表为空，请检查文件内容。')
+
+    id_aliases = {'学号或姓名', '学号', '考号', '准考证号', '学生标识', '姓名', '学生姓名', '学生'}
+    cls_aliases = {'班级', '班号', '班别', '所在班级'}
+    sub_aliases = {'科目', '学科', '更正科目', '修改科目'}
+    val_aliases = {'新分数', '更正后分数', '修改后分数', '分数', '成绩', '新成绩'}
+
+    header_idx = None
+    col_map: dict[str, int] = {}
+    for r_idx, row in enumerate(raw_rows[:15]):
+        norm = [str(c or '').strip() for c in row]
+        found: dict[str, int] = {}
+        for c_idx, cell in enumerate(norm):
+            if not cell:
+                continue
+            if 'id' not in found and cell in id_aliases:
+                found['id'] = c_idx
+            elif 'name' not in found and cell in {'姓名', '学生姓名'}:
+                found['name'] = c_idx
+            elif 'class' not in found and cell in cls_aliases:
+                found['class'] = c_idx
+            elif 'subject' not in found and cell in sub_aliases:
+                found['subject'] = c_idx
+            elif 'value' not in found and cell in val_aliases:
+                found['value'] = c_idx
+        if 'id' in found and 'subject' in found and 'value' in found:
+            header_idx = r_idx
+            col_map = found
+            break
+
+    if header_idx is None:
+        raise ValueError('未能识别更正表表头，请使用「学号或姓名、班级、科目、新分数」列（可下载标准更正模板）。')
+
+    records = []
+    for offset, row in enumerate(raw_rows[header_idx + 1:], start=header_idx + 2):
+        if not any(c is not None and str(c).strip() != '' for c in row):
+            continue
+        def _cell(key):
+            idx = col_map.get(key)
+            return row[idx] if (idx is not None and idx < len(row)) else None
+
+        ident = str(_cell('id') or '').strip()
+        extra_name = str(_cell('name') or '').strip()
+        cls_raw = str(_cell('class') or '').strip()
+        sub_raw = str(_cell('subject') or '').strip()
+        val_raw = _cell('value')
+        records.append({
+            'row': offset,
+            'identifier': ident,
+            'name': extra_name,
+            'class_raw': cls_raw,
+            'subject': sub_raw,
+            'raw_value': val_raw,
+        })
+    if not records:
+        raise ValueError('更正表中没有找到待更正的数据行。')
+    if len(records) > 500:
+        raise ValueError('单次更正表最多支持 500 行，请拆分后导入。')
+    return records

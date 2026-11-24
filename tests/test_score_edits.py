@@ -390,5 +390,47 @@ class Task4BackupSyncTests(ScoreEditsBaseTest):
                 server.invalidate_cache()
 
 
+class Task6BatchImportTests(ScoreEditsBaseTest):
+    def test_import_score_edits_template_and_preview_with_unmatched_and_absent(self):
+        ds = _sample_dataset('exam-imp-1', '初三更正表测', '2026-10-15')
+        self._post('/api/exams', {'dataset': ds})
+
+        # 1. Template download
+        tpl_bytes, headers = self._get('/api/templates/score-edits.xlsx')
+        self.assertIn('spreadsheetml', headers.get('Content-Type', ''))
+        wb_tpl = openpyxl.load_workbook(io.BytesIO(tpl_bytes))
+        ws_tpl = wb_tpl.active
+        self.assertEqual([ws_tpl.cell(1, c).value for c in range(1, 5)], ['学号或姓名', '班级', '科目', '新分数'])
+
+        # 2. Build 3-row correction sheet (2 matched incl. 缺考 -> None, 1 unmatched)
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append(['学号或姓名', '班级', '科目', '新分数'])
+        ws.append(['102', '01', '数学', 140])
+        ws.append(['王三', '01', '英语', '缺考'])
+        ws.append(['999999', '02', '数学', 100])
+        buf = io.BytesIO()
+        wb.save(buf)
+
+        res = self._post(f"/api/exams/{ds['id']}/scores/import", {
+            'filename': '更正表.xlsx',
+            'content': base64.b64encode(buf.getvalue()).decode('ascii'),
+            'reason': '批量复核更正',
+        })
+        self.assertEqual(len(res['matched_edits']), 2)
+        self.assertEqual(res['matched_edits'][0]['row_id'], 'student:102')
+        self.assertEqual(res['matched_edits'][0]['value'], 140.0)
+        self.assertEqual(res['matched_edits'][1]['row_id'], 'student:103')
+        self.assertIsNone(res['matched_edits'][1]['value'])
+        self.assertEqual(len(res['unmatched']), 1)
+        self.assertEqual(res['unmatched'][0]['row'], 4)
+        self.assertTrue(res['unmatched'][0]['reason'])
+        self.assertEqual(res['summary']['edited_cells'], 2)
+
+        # Ensure import only previews and did NOT save yet
+        edits_now = self._get_json(f"/api/exams/{ds['id']}/scores/edits")
+        self.assertEqual(edits_now['edit_count'], 0)
+
+
 if __name__ == '__main__':
     unittest.main()

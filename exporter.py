@@ -198,3 +198,51 @@ def generate_teacher_template_xlsx() -> bytes:
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+def generate_score_edits_template_xlsx() -> bytes:
+    """Generate a clean downloadable score correction template Excel file."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = '成绩更正表'
+    headers = ['学号或姓名', '班级', '科目', '新分数']
+    ws.append(headers)
+    ws.append(['20280101', '01', '数学', 132])
+    ws.append(['张三', '01', '英语', '缺考'])
+
+    for cell in ws[1]:
+        cell.fill = PatternFill('solid', fgColor='EEE7F8')
+        cell.font = Font(name='Microsoft YaHei', size=10, bold=True, color='493559')
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+    ws.row_dimensions[1].height = 28
+    for row in ws.iter_rows(min_row=2, max_row=3):
+        for cell in row:
+            cell.font = Font(name='Microsoft YaHei', size=10, color='302A40')
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+    widths = [18, 10, 12, 12]
+    for idx, w in enumerate(widths, 1):
+        ws.column_dimensions[get_column_letter(idx)].width = w
+    ws.freeze_panes = 'A2'
+
+    guide = wb.create_sheet('填写说明')
+    guide_rows = [
+        ['融侨学迹 · 成绩更正表填写说明'],
+        ['1. 必填列：「学号或姓名」、「科目」、「新分数」；建议同时填写「班级」以防同名歧义。'],
+        ['2. 匹配规则：优先按学号精确匹配；未填学号时按「班级 + 姓名」匹配。'],
+        ['3. 缺考与 0 分：「新分数」填“缺考”或留空表示改为缺考（不计该科分）；填 0 表示真实 0 分。'],
+        ['4. 导入后先展示影响预览，确认无误并填写原因后才正式写入修改记录。'],
+    ]
+    for r in guide_rows:
+        guide.append(r)
+    guide['A1'].font = Font(name='Microsoft YaHei', size=13, bold=True, color='684792')
+    for r_idx in range(2, len(guide_rows) + 1):
+        guide[f'A{r_idx}'].font = Font(name='Microsoft YaHei', size=10, color='302A40')
+    guide.column_dimensions['A'].width = 92
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()

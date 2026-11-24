@@ -42,6 +42,7 @@ from engine import (
 )
 from exporter import (
     export_workbook,
+    generate_score_edits_template_xlsx,
     generate_score_template_xlsx,
     generate_teacher_template_xlsx,
 )
@@ -52,6 +53,7 @@ from workbook import (
     check_roster_hygiene,
     inspect_multi_workbook,
     normalize_class,
+    parse_score_edits_file,
     parse_teachers_workbook,
     parse_workbook,
 )
@@ -1264,6 +1266,12 @@ class Handler(BaseHTTPRequestHandler):
                 mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                 filename='融侨学迹_任课教师模板.xlsx',
             )
+        if path == '/api/templates/score-edits.xlsx':
+            return self.send(
+                generate_score_edits_template_xlsx(),
+                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                filename='融侨学迹_成绩更正模板.xlsx',
+            )
         if path == '/api/trends':
             grade = query.get('grade', [''])[0]
             with db() as conn:
@@ -1768,6 +1776,99 @@ class Handler(BaseHTTPRequestHandler):
                 teachers_updated=teachers_updated,
                 exam_ids=exam_ids,
             ))
+        match_import_scores = re.fullmatch(r'/api/exams/([^/]+)/scores/import', path)
+        if match_import_scores:
+            exam_id = match_import_scores.group(1)
+            row = get_exam(exam_id)
+            filename = Path(str(payload.get('filename') or '更正表.xlsx')).name
+            content = base64.b64decode(payload.get('content', ''), validate=True)
+            if len(content) > 10 * 1024 * 1024:
+                raise ValueError('更正表文件超过 10MB，请精简后导入。')
+            reason = str(payload.get('reason') or '').strip()[:200]
+            parsed_rows = parse_score_edits_file(content, filename)
+            rules = json.loads(row['rules'])
+            full_marks = (rules or {}).get('full_marks') or {}
+            with db() as conn:
+                eff_ds = effective_dataset(conn, row)
+                subjects = set(eff_ds.get('subjects') or [])
+                by_id = {r['id']: r for r in eff_ds.get('rows') or []}
+                by_code: dict[str, list[dict]] = {}
+                by_cls_name: dict[tuple[str, str], list[dict]] = {}
+                by_name: dict[str, list[dict]] = {}
+                for stu in eff_ds.get('rows') or []:
+                    sid = str(stu['id'])
+                    if sid.startswith('student:'):
+                        by_code.setdefault(sid[8:], []).append(stu)
+                    by_cls_name.setdefault((normalize_class(stu.get('class', '')), str(stu.get('name') or '').strip()), []).append(stu)
+                    by_name.setdefault(str(stu.get('name') or '').strip(), []).append(stu)
+
+                matched_edits: list[dict] = []
+                unmatched: list[dict] = []
+                for item in parsed_rows:
+                    rno = item['row']
+                    ident = item['identifier']
+                    cls_norm = normalize_class(item['class_raw']) if item['class_raw'] else ''
+                    sub = item['subject']
+                    if not ident:
+                        unmatched.append({'row': rno, 'reason': '缺少学号或姓名'})
+                        continue
+                    if sub not in subjects:
+                        unmatched.append({'row': rno, 'reason': f'科目「{sub or "空"}」在当前考试中不存在'})
+                        continue
+                    # Resolve student
+                    target_stu = None
+                    if ident in by_id:
+                        target_stu = by_id[ident]
+                    elif f'student:{ident}' in by_id:
+                        target_stu = by_id[f'student:{ident}']
+                    elif ident in by_code and len(by_code[ident]) == 1:
+                        target_stu = by_code[ident][0]
+                    else:
+                        name_cand = item['name'] or ident
+                        if cls_norm:
+                            hits = by_cls_name.get((cls_norm, name_cand), [])
+                            if len(hits) == 1:
+                                target_stu = hits[0]
+                            elif len(hits) > 1:
+                                unmatched.append({'row': rno, 'reason': f'{cls_norm}班存在多名「{name_cand}」，请改用学号定位'})
+                                continue
+                        else:
+                            hits = by_name.get(name_cand, [])
+                            if len(hits) == 1:
+                                target_stu = hits[0]
+                            elif len(hits) > 1:
+                                unmatched.append({'row': rno, 'reason': f'全年级存在多名「{name_cand}」，请补充班级或学号'})
+                                continue
+                    if target_stu is None:
+                        unmatched.append({'row': rno, 'reason': f'找不到匹配学生（{ident}{" / " + cls_norm + "班" if cls_norm else ""}）'})
+                        continue
+                    try:
+                        val = _validate_score_value(item['raw_value'], sub, full_marks)
+                    except ValueError as exc:
+                        unmatched.append({'row': rno, 'reason': str(exc)})
+                        continue
+                    matched_edits.append({
+                        'row_id': target_stu['id'],
+                        'name': target_stu.get('name', ''),
+                        'class': target_stu.get('class', ''),
+                        'subject': sub,
+                        'value': val,
+                    })
+
+                if matched_edits:
+                    prev_res = preview_score_edits(conn, row, matched_edits)
+                else:
+                    prev_res = {
+                        'students': [],
+                        'cutoffs': {},
+                        'classes': [],
+                        'summary': {'edited_cells': 0, 'students_rank_changed': 0, 'students_grade_changed': 0, 'cutoffs_changed': 0},
+                        'warnings': [],
+                    }
+            prev_res['matched_edits'] = matched_edits
+            prev_res['unmatched'] = unmatched
+            prev_res['reason'] = reason
+            return self.send(prev_res)
         match_preview = re.fullmatch(r'/api/exams/([^/]+)/scores/preview', path)
         if match_preview:
             exam_id = match_preview.group(1)
