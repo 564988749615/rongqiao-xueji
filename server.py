@@ -2006,6 +2006,34 @@ class Handler(BaseHTTPRequestHandler):
             invalidate_cache(exam_id)
             _trigger_auto_sync('score-revoke')
             return self.send(dict(ok=True, data_version=new_version, edit_count=new_edit_count))
+        match_pub = re.fullmatch(r'/api/exams/([^/]+)/(publish|unlock)', path)
+        if match_pub:
+            exam_id, pub_action = match_pub.groups()
+            row = get_exam(exam_id)
+            if row['archived']:
+                raise ValueError('该考试已归档，无法执行发布或解锁操作。')
+            ts = now()
+            if pub_action == 'publish':
+                with db() as conn:
+                    conn.execute('UPDATE exams SET published_at=?, updated_at=? WHERE id=?', (ts, ts, exam_id))
+                invalidate_cache(exam_id)
+                _trigger_auto_sync('publish')
+                return self.send(exam_summary(get_exam(exam_id)))
+            reason = str(payload.get('reason') or '').strip()
+            if not reason or len(reason) > 200:
+                raise ValueError('解锁已发布考试必须填写解锁原因（1–200 字）。')
+            with db() as conn:
+                conn.execute(
+                    '''INSERT INTO score_edits(
+                         id, exam_id, row_id, source_row, subject, old_value, new_value,
+                         reason, editor, batch_id, created_at, revoked_at
+                       ) VALUES(?,?,?,NULL,'__unlock__',NULL,NULL,?,?,?, ?,NULL)''',
+                    (uuid.uuid4().hex, exam_id, '__exam__', reason, str(payload.get('editor') or '')[:80], uuid.uuid4().hex, ts),
+                )
+                conn.execute("UPDATE exams SET published_at='', updated_at=? WHERE id=?", (ts, exam_id))
+            invalidate_cache(exam_id)
+            _trigger_auto_sync('unlock')
+            return self.send(exam_summary(get_exam(exam_id)))
         match = re.fullmatch(r'/api/exams/([^/]+)/(rules|meta|archive|restore|delete)', path)
         if match:
             exam_id, action = match.groups()

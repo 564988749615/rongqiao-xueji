@@ -508,5 +508,38 @@ class Task8QuickEditsSaveTests(ScoreEditsBaseTest):
         self.assertEqual(next(s for s in ana['students'] if s['id'] == 'student:102')['scores']['数学'], 145.0)
 
 
+class Task9PublishLockTests(ScoreEditsBaseTest):
+    def test_publish_blocks_edits_and_unlock_logs_audit_record(self):
+        ds = _sample_dataset('exam-pub-1', '初三发布测', '2026-10-15')
+        self._post('/api/exams', {'dataset': ds})
+
+        pub = self._post(f"/api/exams/{ds['id']}/publish", {})
+        self.assertTrue(pub['published_at'])
+
+        code, msg = self._post_expect_error(f"/api/exams/{ds['id']}/scores", {
+            'edits': [{'row_id': 'student:102', 'subject': '数学', 'value': 130}],
+            'reason': '尝试改已发布',
+        })
+        self.assertEqual(code, 400)
+        self.assertIn('发布', msg)
+
+        code, msg = self._post_expect_error(f"/api/exams/{ds['id']}/unlock", {'reason': ''})
+        self.assertEqual(code, 400)
+        self.assertIn('原因', msg)
+
+        unl = self._post(f"/api/exams/{ds['id']}/unlock", {'reason': '教务核分复查解锁'})
+        self.assertEqual(unl['published_at'], '')
+        self.assertEqual(unl['edit_count'], 0)
+
+        edits = self._get_json(f"/api/exams/{ds['id']}/scores/edits")
+        self.assertTrue(any(e['subject'] == '__unlock__' and e['reason'] == '教务核分复查解锁' for e in edits['edits']))
+
+        saved = self._post(f"/api/exams/{ds['id']}/scores", {
+            'edits': [{'row_id': 'student:102', 'subject': '数学', 'value': 130}],
+            'reason': '解锁后更正',
+        })
+        self.assertEqual(saved['edit_count'], 1)
+
+
 if __name__ == '__main__':
     unittest.main()
