@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#6f4eb8">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%236f4eb8'/%3E%3Crect x='7' y='16' width='4' height='10' rx='2' fill='%23fff'/%3E%3Crect x='14' y='11' width='4' height='15' rx='2' fill='%23fff'/%3E%3Crect x='21' y='6' width='4' height='20' rx='2' fill='%23fff'/%3E%3C/svg%3E">
   <title>融侨学迹 · 学业质量档案</title>
   <link rel="stylesheet" href="/common.css">
   <link rel="stylesheet" href="/leader.css">
@@ -36,6 +37,7 @@
             <select id="exam-select" aria-label="选择考试"></select>
           </label>
           <span id="scope-description" class="scope-pill"></span>
+          <button id="exam-edits-badge" class="exam-edits-badge" type="button" data-action="open-score-edits" hidden></button>
           <button class="btn quiet small" type="button" data-action="rules">口径设置</button>
         </div>
       </div>
@@ -76,6 +78,7 @@
   <script src="/leader-cards.js"></script>
   <script src="/leader-levels.js"></script>
   <script src="/leader-print-studio.js"></script>
+  <script src="/leader-edits.js"></script>
   <script src="/leader.js"></script>
 </body>
 </html>
