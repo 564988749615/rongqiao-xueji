@@ -66,10 +66,13 @@ _EXAM_META_COLUMNS = (
     ('imported_at', "TEXT NOT NULL DEFAULT ''"),
     ('row_count', 'INTEGER NOT NULL DEFAULT 0'),
     ('subject_count', 'INTEGER NOT NULL DEFAULT 0'),
+    ('edit_count', 'INTEGER NOT NULL DEFAULT 0'),
+    ('data_version', 'INTEGER NOT NULL DEFAULT 1'),
+    ('published_at', "TEXT NOT NULL DEFAULT ''"),
 )
 _SUMMARY_SQL = (
     'SELECT id, name, grade, exam_date, filename, imported_at, row_count, subject_count, '
-    'rules, archived, created_at, updated_at FROM exams'
+    'edit_count, data_version, published_at, rules, archived, created_at, updated_at FROM exams'
 )
 
 
@@ -127,6 +130,22 @@ def init_db() -> None:
             value TEXT NOT NULL,
             updated_at TEXT NOT NULL
           );
+          CREATE TABLE IF NOT EXISTS score_edits (
+            id TEXT PRIMARY KEY,
+            exam_id TEXT NOT NULL REFERENCES exams(id),
+            row_id TEXT NOT NULL,
+            source_row INTEGER,
+            subject TEXT NOT NULL,
+            old_value REAL,
+            new_value REAL,
+            reason TEXT NOT NULL,
+            editor TEXT NOT NULL DEFAULT '',
+            batch_id TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            revoked_at TEXT
+          );
+          CREATE INDEX IF NOT EXISTS idx_score_edits_exam_revoked ON score_edits(exam_id, revoked_at);
+          CREATE INDEX IF NOT EXISTS idx_score_edits_exam_cell ON score_edits(exam_id, row_id, subject);
         ''')
         existing_cols = {row['name'] for row in conn.execute('PRAGMA table_info(exams)').fetchall()}
         for col_name, col_def in _EXAM_META_COLUMNS:
@@ -597,6 +616,9 @@ def _dataset_meta(dataset: dict, fallback_created_at: str) -> tuple:
 
 def exam_summary(row) -> dict:
     keys = row.keys()
+    edit_count = int(row['edit_count']) if 'edit_count' in keys and row['edit_count'] is not None else 0
+    data_version = int(row['data_version']) if 'data_version' in keys and row['data_version'] is not None else 1
+    published_at = str(row['published_at'] or '') if 'published_at' in keys else ''
     if 'row_count' in keys and (row['name'] or row['row_count']):
         return dict(
             id=row['id'],
@@ -607,6 +629,9 @@ def exam_summary(row) -> dict:
             imported_at=row['imported_at'] or row['created_at'],
             row_count=row['row_count'],
             subject_count=row['subject_count'],
+            edit_count=edit_count,
+            data_version=data_version,
+            published_at=published_at,
             rules=json.loads(row['rules']),
             archived=bool(row['archived']),
             created_at=row['created_at'],
@@ -621,10 +646,78 @@ def exam_summary(row) -> dict:
         imported_at=d.get('imported_at', row['created_at']),
         row_count=len(d['rows']),
         subject_count=len(d['subjects']),
+        edit_count=edit_count,
+        data_version=data_version,
+        published_at=published_at,
         rules=json.loads(row['rules']),
         archived=bool(row['archived']),
         created_at=row['created_at'],
     )
+
+
+def effective_dataset(
+    conn: sqlite3.Connection,
+    exam_row,
+    *,
+    extra_edits: list[dict] | None = None,
+    exclude_edit_id: str | None = None,
+) -> dict:
+    """Overlay active score_edits onto the immutable raw dataset without mutating stored data."""
+    dataset = json.loads(exam_row['dataset'])
+    rows_by_id = {r['id']: r for r in dataset.get('rows') or []}
+    edit_rows = conn.execute(
+        '''SELECT id, row_id, subject, new_value FROM score_edits
+           WHERE exam_id=? AND revoked_at IS NULL AND subject != '__unlock__'
+           ORDER BY created_at ASC, rowid ASC''',
+        (exam_row['id'],),
+    ).fetchall()
+    for er in edit_rows:
+        if exclude_edit_id and er['id'] == exclude_edit_id:
+            continue
+        stu = rows_by_id.get(er['row_id'])
+        if stu is not None and er['subject'] in (dataset.get('subjects') or []):
+            stu['scores'][er['subject']] = er['new_value']
+    if extra_edits:
+        valid_subjects = set(dataset.get('subjects') or [])
+        for item in extra_edits:
+            stu = rows_by_id.get(item['row_id'])
+            sub = item['subject']
+            if stu is not None and sub in valid_subjects:
+                stu['scores'][sub] = item['value']
+    return dataset
+
+
+def get_active_score_edits(conn: sqlite3.Connection, exam_id: str) -> dict[str, dict]:
+    """Return latest active edit metadata keyed by 'row_id||subject' for UI markers."""
+    rows = conn.execute(
+        '''SELECT id, row_id, source_row, subject, old_value, new_value, reason, created_at
+           FROM score_edits
+           WHERE exam_id=? AND revoked_at IS NULL AND subject != '__unlock__'
+           ORDER BY created_at ASC, rowid ASC''',
+        (exam_id,),
+    ).fetchall()
+    out: dict[str, dict] = {}
+    for r in rows:
+        key = f"{r['row_id']}||{r['subject']}"
+        out[key] = {
+            'id': r['id'],
+            'row_id': r['row_id'],
+            'source_row': r['source_row'],
+            'subject': r['subject'],
+            'old_value': r['old_value'],
+            'new_value': r['new_value'],
+            'reason': r['reason'],
+            'created_at': r['created_at'],
+        }
+    return out
+
+
+def _recount_active_edits(conn: sqlite3.Connection, exam_id: str) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) AS cnt FROM score_edits WHERE exam_id=? AND revoked_at IS NULL AND subject != '__unlock__'",
+        (exam_id,),
+    ).fetchone()
+    return int(row['cnt']) if row else 0
 
 
 def get_exam(exam_id: str):
@@ -655,13 +748,24 @@ def example_dataset() -> dict:
 def exam_analysis(row, rules=None, *, include_tables: bool = True) -> dict:
     effective_rules = json.loads(row['rules']) if rules is None else rules
     rules_key = row['rules'] if rules is None else encode(rules)
-    cache_key = (str(DATA), row['id'], row['updated_at'], rules_key, include_tables)
+    keys = row.keys()
+    data_version = int(row['data_version']) if 'data_version' in keys and row['data_version'] is not None else 1
+    edit_count = int(row['edit_count']) if 'edit_count' in keys and row['edit_count'] is not None else 0
+    published_at = str(row['published_at'] or '') if 'published_at' in keys else ''
+    cache_key = (str(DATA), row['id'], row['updated_at'], data_version, rules_key, include_tables)
     with _CACHE_LOCK:
         cached = _ANALYSIS_CACHE.get(cache_key)
         if cached is not None:
             _ANALYSIS_CACHE.move_to_end(cache_key)
             return cached
-    result = analyze(json.loads(row['dataset']), effective_rules, include_tables=include_tables)
+    with db() as conn:
+        eff_ds = effective_dataset(conn, row)
+        active_edits = get_active_score_edits(conn, row['id'])
+    result = analyze(eff_ds, effective_rules, include_tables=include_tables)
+    result['metadata']['data_version'] = data_version
+    result['metadata']['edit_count'] = edit_count
+    result['metadata']['published_at'] = published_at
+    result['active_edits'] = active_edits
     with _CACHE_LOCK:
         _ANALYSIS_CACHE[cache_key] = result
         _ANALYSIS_CACHE.move_to_end(cache_key)
@@ -815,7 +919,19 @@ class Handler(BaseHTTPRequestHandler):
         match = re.fullmatch(r'/api/exams/([^/]+)', path)
         if match:
             row = get_exam(match.group(1))
-            return self.send(dict(dataset=json.loads(row['dataset']), rules=json.loads(row['rules'])))
+            with db() as conn:
+                eff_ds = effective_dataset(conn, row)
+                active_edits = get_active_score_edits(conn, row['id'])
+            summary = exam_summary(row)
+            return self.send(dict(
+                dataset=json.loads(row['dataset']),
+                effective_dataset=eff_ds,
+                rules=json.loads(row['rules']),
+                edit_count=summary['edit_count'],
+                data_version=summary['data_version'],
+                published_at=summary['published_at'],
+                active_edits=active_edits,
+            ))
         if path == '/api/templates/scores.xlsx':
             return self.send(
                 generate_score_template_xlsx(),
@@ -1354,7 +1470,7 @@ class Handler(BaseHTTPRequestHandler):
                             (grade_name, exam_id),
                         ).fetchall()
                         for sib in siblings:
-                            sib_ds = json.loads(sib['dataset'])
+                            sib_ds = effective_dataset(conn, sib)
                             sib_rules = json.loads(sib['rules'])
                             merged = {**sib_rules, **portable}
                             if 'full_marks' in portable:
@@ -1403,6 +1519,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not row['archived']:
                     raise ValueError('请先归档该考试，再执行彻底删除。')
                 with db() as conn:
+                    conn.execute('DELETE FROM score_edits WHERE exam_id=?', (exam_id,))
                     conn.execute('DELETE FROM teachers WHERE exam_id=?', (exam_id,))
                     conn.execute('DELETE FROM notes WHERE exam_id=?', (exam_id,))
                     conn.execute('DELETE FROM exams WHERE id=?', (exam_id,))
