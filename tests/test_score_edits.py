@@ -207,5 +207,116 @@ class Task2PreviewTests(ScoreEditsBaseTest):
         self.assertIn('找不到', msg)
 
 
+class Task3SaveListRevokeTests(ScoreEditsBaseTest):
+    def test_save_list_revoke_history_brief_and_missing_policies(self):
+        ds1 = _sample_dataset('exam-s-1', '初三一测', '2026-09-15')
+        ds2 = _sample_dataset('exam-s-2', '初三二测', '2026-10-15')
+        self._post('/api/exams', {'dataset': ds1})
+        self._post('/api/exams', {'dataset': ds2})
+
+        ana_before = self._post('/api/analyze', {'exam_id': ds2['id']})
+        hist_before = self._post('/api/history', {'grade': '初三'})
+        li_hist_before = next(s for s in hist_before['students'] if s['id'] == 'student:102')
+
+        # Empty reason rejected
+        code, msg = self._post_expect_error(f"/api/exams/{ds2['id']}/scores", {
+            'edits': [{'row_id': 'student:102', 'subject': '数学', 'value': 148}],
+            'reason': '   ',
+        })
+        self.assertEqual(code, 400)
+        self.assertIn('原因', msg)
+
+        # No-op edit rejected
+        code, msg = self._post_expect_error(f"/api/exams/{ds2['id']}/scores", {
+            'edits': [{'row_id': 'student:102', 'subject': '数学', 'value': 118}],
+            'reason': '复核更正',
+        })
+        self.assertEqual(code, 400)
+        self.assertIn('没有需要保存的修改', msg)
+
+        # Save edit #1: 李二 数学 118 -> 148
+        res1 = self._post(f"/api/exams/{ds2['id']}/scores", {
+            'edits': [{'row_id': 'student:102', 'subject': '数学', 'value': 148}],
+            'reason': '复核漏加分',
+        })
+        self.assertTrue(res1['ok'])
+        self.assertEqual(res1['data_version'], 2)
+        self.assertEqual(res1['edit_count'], 1)
+
+        ana_after1 = self._post('/api/analyze', {'exam_id': ds2['id']})
+        li_after1 = next(s for s in ana_after1['students'] if s['id'] == 'student:102')
+        self.assertEqual(li_after1['scores']['数学'], 148.0)
+        self.assertEqual(li_after1['total'], 363.0)
+        self.assertEqual(li_after1['rank'], 1)
+        self.assertEqual(ana_after1['metadata']['data_version'], 2)
+        self.assertEqual(ana_after1['metadata']['edit_count'], 1)
+
+        # /api/history & /api/class-brief reflect new score
+        hist_after = self._post('/api/history', {'grade': '初三'})
+        li_hist_after = next(s for s in hist_after['students'] if s['id'] == 'student:102')
+        self.assertLess(li_hist_after['composite'], li_hist_before['composite'])
+        brief = self._post('/api/class-brief', {'exam_id': ds2['id'], 'class': '01'})
+        li_comp = next(r for r in brief['student_comparison']['rows'] if r['name'] == '李二')
+        self.assertEqual(li_comp['total'], 363.0)
+
+        # Save edit #2 on same cell: 148 -> 138
+        res2 = self._post(f"/api/exams/{ds2['id']}/scores", {
+            'edits': [{'row_id': 'student:102', 'subject': '数学', 'value': 138}],
+            'reason': '二次复核',
+        })
+        self.assertEqual(res2['data_version'], 3)
+        self.assertEqual(res2['edit_count'], 2)
+
+        edits_list = self._get_json(f"/api/exams/{ds2['id']}/scores/edits")
+        self.assertEqual(len(edits_list['edits']), 2)
+        self.assertEqual(edits_list['data_version'], 3)
+        edit2_id = edits_list['edits'][0]['id']
+        edit1_id = edits_list['edits'][1]['id']
+
+        # Revoke edit #2 -> reverts to edit #1 (148.0)
+        rev2 = self._post(f"/api/exams/{ds2['id']}/scores/edits/{edit2_id}/revoke", {})
+        self.assertTrue(rev2['ok'])
+        self.assertEqual(rev2['data_version'], 4)
+        self.assertEqual(rev2['edit_count'], 1)
+        ana_rev2 = self._post('/api/analyze', {'exam_id': ds2['id']})
+        self.assertEqual(next(s for s in ana_rev2['students'] if s['id'] == 'student:102')['scores']['数学'], 148.0)
+
+        # Double revoke rejected
+        code, _ = self._post_expect_error(f"/api/exams/{ds2['id']}/scores/edits/{edit2_id}/revoke", {})
+        self.assertEqual(code, 400)
+
+        # Revoke edit #1 -> exact match with original ana_before!
+        self._post(f"/api/exams/{ds2['id']}/scores/edits/{edit1_id}/revoke", {})
+        ana_restored = self._post('/api/analyze', {'exam_id': ds2['id']})
+        self.assertEqual(ana_restored['students'], ana_before['students'])
+        self.assertEqual(ana_restored['cutoffs'], ana_before['cutoffs'])
+        self.assertEqual(ana_restored['class_stats'], ana_before['class_stats'])
+
+        # Test null (缺考) under exclude_total vs zero policy
+        self._post(f"/api/exams/{ds2['id']}/scores", {
+            'edits': [{'row_id': 'student:103', 'subject': '英语', 'value': None}],
+            'reason': '补录缺考',
+        })
+        ana_null_excl = self._post('/api/analyze', {'exam_id': ds2['id']})
+        wang_excl = next(s for s in ana_null_excl['students'] if s['id'] == 'student:103')
+        self.assertIsNone(wang_excl['total'])
+        self.assertIsNone(wang_excl['rank'])
+
+        self._post(f"/api/exams/{ds2['id']}/rules", {'rules': {'missing_policy': 'zero'}})
+        ana_null_zero = self._post('/api/analyze', {'exam_id': ds2['id']})
+        wang_zero = next(s for s in ana_null_zero['students'] if s['id'] == 'student:103')
+        self.assertEqual(wang_zero['total'], 205.0)
+        self.assertIsNotNone(wang_zero['rank'])
+
+        # Archived exam rejects score edit
+        self._post(f"/api/exams/{ds2['id']}/archive", {})
+        code, msg = self._post_expect_error(f"/api/exams/{ds2['id']}/scores", {
+            'edits': [{'row_id': 'student:101', 'subject': '数学', 'value': 130}],
+            'reason': '尝试改归档',
+        })
+        self.assertEqual(code, 400)
+        self.assertIn('归档', msg)
+
+
 if __name__ == '__main__':
     unittest.main()

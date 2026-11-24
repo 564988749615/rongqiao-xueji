@@ -1132,6 +1132,43 @@ class Handler(BaseHTTPRequestHandler):
                 mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                 filename=filename,
             )
+        match = re.fullmatch(r'/api/exams/([^/]+)/scores/edits', path)
+        if match:
+            exam_id = match.group(1)
+            row = get_exam(exam_id)
+            raw_ds = json.loads(row['dataset'])
+            stu_map = {r['id']: r for r in raw_ds.get('rows') or []}
+            with db() as conn:
+                edit_rows = conn.execute(
+                    'SELECT * FROM score_edits WHERE exam_id=? ORDER BY created_at DESC, rowid DESC',
+                    (exam_id,),
+                ).fetchall()
+            edits = []
+            for er in edit_rows:
+                stu = stu_map.get(er['row_id']) or {}
+                edits.append({
+                    'id': er['id'],
+                    'exam_id': er['exam_id'],
+                    'row_id': er['row_id'],
+                    'source_row': er['source_row'],
+                    'name': stu.get('name') or (f"第{er['source_row']}行" if er['source_row'] else er['row_id']),
+                    'class': stu.get('class') or '',
+                    'subject': er['subject'],
+                    'old_value': er['old_value'],
+                    'new_value': er['new_value'],
+                    'reason': er['reason'],
+                    'editor': er['editor'],
+                    'batch_id': er['batch_id'],
+                    'created_at': er['created_at'],
+                    'revoked_at': er['revoked_at'],
+                })
+            summary = exam_summary(row)
+            return self.send(dict(
+                edits=edits,
+                data_version=summary['data_version'],
+                edit_count=summary['edit_count'],
+                published_at=summary['published_at'],
+            ))
         match = re.fullmatch(r'/api/exams/([^/]+)', path)
         if match:
             row = get_exam(match.group(1))
@@ -1676,6 +1713,94 @@ class Handler(BaseHTTPRequestHandler):
                     revoke_edit_id=str(payload.get('revoke_edit_id') or '').strip() or None,
                 )
             return self.send(res)
+        match_save_scores = re.fullmatch(r'/api/exams/([^/]+)/scores', path)
+        if match_save_scores:
+            exam_id = match_save_scores.group(1)
+            row = get_exam(exam_id)
+            if row['archived']:
+                raise ValueError('该考试已归档，无法修改成绩。请先恢复后再操作。')
+            if str(row['published_at'] or '').strip():
+                raise ValueError('本场考试已发布，如需更正成绩请先解锁。')
+            reason = str(payload.get('reason') or '').strip()
+            if not reason or len(reason) > 200:
+                raise ValueError('请填写修改原因（1–200 字）。')
+            editor = str(payload.get('editor') or '').strip()[:80]
+            rules = json.loads(row['rules'])
+            ts = now()
+            batch_id = uuid.uuid4().hex
+            with db() as conn:
+                eff_ds = effective_dataset(conn, row)
+                cleaned = _validate_score_edit_items(payload.get('edits'), eff_ds, rules)
+                effective_changes = [
+                    item for item in cleaned if not _values_equal(item['old_value'], item['value'])
+                ]
+                if not effective_changes:
+                    raise ValueError('没有需要保存的修改。')
+                for item in effective_changes:
+                    conn.execute(
+                        '''INSERT INTO score_edits(
+                             id, exam_id, row_id, source_row, subject, old_value, new_value,
+                             reason, editor, batch_id, created_at, revoked_at
+                           ) VALUES(?,?,?,?,?,?,?,?,?,?,?,NULL)''',
+                        (
+                            uuid.uuid4().hex,
+                            exam_id,
+                            item['row_id'],
+                            item['source_row'],
+                            item['subject'],
+                            item['old_value'],
+                            item['value'],
+                            reason,
+                            editor,
+                            batch_id,
+                            ts,
+                        ),
+                    )
+                new_edit_count = _recount_active_edits(conn, exam_id)
+                new_version = int(row['data_version'] or 1) + 1
+                conn.execute(
+                    'UPDATE exams SET updated_at=?, edit_count=?, data_version=? WHERE id=?',
+                    (ts, new_edit_count, new_version, exam_id),
+                )
+            invalidate_cache(exam_id)
+            _trigger_auto_sync('score-edit')
+            return self.send(dict(
+                ok=True,
+                batch_id=batch_id,
+                data_version=new_version,
+                edit_count=new_edit_count,
+                saved_count=len(effective_changes),
+            ))
+        match_revoke = re.fullmatch(r'/api/exams/([^/]+)/scores/edits/([^/]+)/revoke', path)
+        if match_revoke:
+            exam_id, edit_id = match_revoke.groups()
+            row = get_exam(exam_id)
+            if row['archived']:
+                raise ValueError('该考试已归档，无法撤销修改。请先恢复后再操作。')
+            if str(row['published_at'] or '').strip():
+                raise ValueError('本场考试已发布，如需撤销更正请先解锁。')
+            ts = now()
+            with db() as conn:
+                er = conn.execute(
+                    'SELECT * FROM score_edits WHERE id=? AND exam_id=?',
+                    (edit_id, exam_id),
+                ).fetchone()
+                if er is None:
+                    raise ValueError('找不到这条修改记录。')
+                if er['revoked_at'] is not None:
+                    raise ValueError('这条修改记录已经被撤销。')
+                if er['subject'] == '__unlock__':
+                    raise ValueError('解锁审计记录不支持撤销。')
+                conn.execute('UPDATE score_edits SET revoked_at=? WHERE id=?', (ts, edit_id))
+                new_edit_count = _recount_active_edits(conn, exam_id)
+                new_version = int(row['data_version'] or 1) + 1
+                conn.execute(
+                    'UPDATE exams SET updated_at=?, edit_count=?, data_version=? WHERE id=?',
+                    (ts, new_edit_count, new_version, exam_id),
+                )
+            invalidate_cache(exam_id)
+            _trigger_auto_sync('score-revoke')
+            return self.send(dict(ok=True, data_version=new_version, edit_count=new_edit_count))
         match = re.fullmatch(r'/api/exams/([^/]+)/(rules|meta|archive|restore|delete)', path)
         if match:
             exam_id, action = match.groups()
