@@ -100,3 +100,101 @@ def export_workbook(analysis: dict) -> bytes:
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+def generate_score_template_xlsx() -> bytes:
+    """Generate a clean downloadable standard score import Excel template."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = '原始成绩（示例）'
+    headers = ['班级', '学号', '姓名', '语文', '数学', '英语', '物理', '化学', '政治', '历史']
+    ws.append(headers)
+    ws.append(['01', '20280101', '示例同学甲', 118, 132, 126, 86, 78, 62, 64])
+    ws.append(['01', '20280102', '示例同学乙', 105, 98, 114, 72, 65, 58, 60])
+    ws.append(['02', '20280201', '示例同学丙', 124, 141, 134, 92, 85, 66, 67])
+
+    for cell in ws[1]:
+        cell.fill = PatternFill('solid', fgColor='EEE7F8')
+        cell.font = Font(name='Microsoft YaHei', size=10, bold=True, color='493559')
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+    ws.row_dimensions[1].height = 28
+    for row in ws.iter_rows(min_row=2, max_row=4):
+        for cell in row:
+            cell.font = Font(name='Microsoft YaHei', size=10, color='302A40')
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+    for idx, col in enumerate(headers, 1):
+        ws.column_dimensions[get_column_letter(idx)].width = 14 if idx in (2, 3) else 10
+    ws.freeze_panes = 'A2'
+
+    guide = wb.create_sheet('填写说明')
+    guide_rows = [
+        ['融侨学迹 · 标准成绩导入模板填写说明'],
+        ['1. 必填列：「班级」与至少一门学科列（如语文、数学、英语等）。'],
+        ['2. 建议保留「学号」列：提供稳定学号后，即使学生转班、改名或全年级重名，也能精准串联历次成长轨迹。'],
+        ['3. 缺考与空白：缺考科目请留空或填“缺考”，系统不会自动把空白当成 0 分。'],
+        ['4. 学科列增减：可按实际考试科目自由增删列（支持语文、数学、英语、物理、化学、政治/道法、历史、地理、生物、体育等）。'],
+        ['5. 一表多考总表：可将同一届历次考试分别放在同一个 Excel 的不同工作表（Sheet）中，并使用软件内「多考总表批量导入」一次增量建档。'],
+        ['6. 正式导入前，请删除第 2～4 行示例数据并粘贴真实成绩。'],
+    ]
+    for r in guide_rows:
+        guide.append(r)
+    guide['A1'].font = Font(name='Microsoft YaHei', size=13, bold=True, color='684792')
+    for r_idx in range(2, len(guide_rows) + 1):
+        guide[f'A{r_idx}'].font = Font(name='Microsoft YaHei', size=10, color='302A40')
+    guide.column_dimensions['A'].width = 96
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def generate_teacher_template_xlsx() -> bytes:
+    """Generate a clean downloadable standard teacher-assignment Excel template."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = '教师基本信息'
+    headers = ['考试名称', '班级', '班主任', '语文', '数学', '英语', '物理', '化学', '政治', '历史']
+    ws.append(headers)
+    ws.append(['初三定时练习（二）', '01', '张老师', '张老师', '李老师', '王老师', '赵老师', '陈老师', '周老师', '吴老师'])
+    ws.append(['初三定时练习（二）', '02', '刘老师', '张老师', '孙老师', '王老师', '赵老师', '陈老师', '周老师', '郑老师'])
+
+    for cell in ws[1]:
+        cell.fill = PatternFill('solid', fgColor='EEE7F8')
+        cell.font = Font(name='Microsoft YaHei', size=10, bold=True, color='493559')
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+    ws.row_dimensions[1].height = 28
+    for row in ws.iter_rows(min_row=2, max_row=3):
+        for cell in row:
+            cell.font = Font(name='Microsoft YaHei', size=10, color='302A40')
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+    ws.column_dimensions['A'].width = 22
+    ws.column_dimensions['B'].width = 10
+    for idx in range(3, len(headers) + 1):
+        ws.column_dimensions[get_column_letter(idx)].width = 11
+    ws.freeze_panes = 'A2'
+
+    guide = wb.create_sheet('填写说明')
+    guide_rows = [
+        ['融侨学迹 · 任课教师表填写说明'],
+        ['1. 「考试名称」列可选：如果一张表记录多场考试的任课安排，请确保「考试名称」与已保存考试名称一致；如只导入单场考试，可删除该列。'],
+        ['2. 同簿导入：也可直接把本工作表放进「多考总表」Excel 中，批量导入成绩时系统会自动识别「教师基本信息」页并按考试名自动关联。'],
+        ['3. 同师多班对比：两位班级填相同教师姓名后，班情分析会自动生成该教师跨班双线达标对比。'],
+    ]
+    for r in guide_rows:
+        guide.append(r)
+    guide['A1'].font = Font(name='Microsoft YaHei', size=13, bold=True, color='684792')
+    for r_idx in range(2, len(guide_rows) + 1):
+        guide[f'A{r_idx}'].font = Font(name='Microsoft YaHei', size=10, color='302A40')
+    guide.column_dimensions['A'].width = 96
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()

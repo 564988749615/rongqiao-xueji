@@ -3,77 +3,166 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#6f4eb8">
   <title>融侨学迹 · 学业质量档案</title>
   <link rel="stylesheet" href="/common.css">
   <style>
-    .home{max-width:1050px;margin:auto;padding:42px 36px 70px}
-    .home header{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:66px}
-    .home h1{font-size:40px;letter-spacing:-1px;margin-bottom:17px}
-    .intro{max-width:620px;font-size:17px;color:var(--muted);line-height:1.8;margin-bottom:37px}
-    .choices{display:grid;grid-template-columns:1fr 1fr;gap:24px}
-    .choice{display:flex;flex-direction:column;min-height:335px;padding:32px;background:#fff;border:1px solid var(--line);border-radius:17px}
-    .choice.featured{background:#eee7f8;border-color:#dbceee}
-    .choice .symbol{margin-bottom:22px;color:var(--primary-dark)}
-    .choice .symbol svg{width:32px;height:32px}
-    .choice h2{font-size:25px;margin-bottom:12px}
-    .choice p{color:#665873;line-height:1.8}
-    .choice .btn{align-self:flex-start;margin-top:auto}
-    .footer{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;color:var(--muted);font-size:13px;margin-top:35px}
-    .footer-links{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
-    .status{font-size:13px;color:var(--success)}
-    .shutdown-link{border:0;background:none;padding:0;color:var(--muted);font-size:13px;text-decoration:underline;text-underline-offset:3px}
-    .shutdown-link:hover{color:var(--danger)}
-    @media(max-width:680px){
-      .home{padding:24px}
-      .home header{margin-bottom:42px}
-      .home h1{font-size:32px}
-      .choices{grid-template-columns:1fr}
-      .choice{min-height:280px}
+    .home { max-width: 1020px; margin: 0 auto; padding: 36px 28px 56px; }
+    .home-head {
+      display: flex; justify-content: space-between; align-items: center; gap: 16px;
+      flex-wrap: wrap; margin-bottom: 42px; padding-bottom: 18px; border-bottom: 1px solid var(--line);
+    }
+    .status-pill {
+      display: inline-flex; align-items: center; gap: 7px; padding: 5px 12px;
+      border-radius: 99px; background: var(--good-bg); border: 1px solid var(--good-border);
+      color: var(--good); font-size: 12.5px; font-weight: 600;
+    }
+    .status-pill i { width: 7px; height: 7px; border-radius: 50%; background: var(--good); }
+    .home-hero h1 { font-size: 34px; line-height: 1.25; letter-spacing: -0.025em; margin: 0 0 10px; color: var(--ink); }
+    .home-intro { max-width: 620px; font-size: 15px; color: var(--ink-secondary); line-height: 1.7; margin: 0 0 24px; }
+
+    .resume-bar {
+      display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+      padding: 16px 20px; margin-bottom: 24px;
+      background: linear-gradient(120deg, var(--primary-soft) 0%, var(--surface) 68%);
+      border: 1px solid var(--line-strong); border-radius: var(--r-md); box-shadow: var(--shadow-sm);
+    }
+    .resume-meta small { display: block; font-size: 12px; color: var(--primary-dark); font-weight: 600; margin-bottom: 3px; }
+    .resume-meta strong { display: block; font-size: 16px; color: var(--ink); }
+    .resume-meta span { font-size: 12.5px; color: var(--muted); }
+    .resume-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+    .choices { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    .choice {
+      display: flex; flex-direction: column; min-height: 268px; padding: 24px 26px;
+      background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg);
+      box-shadow: var(--shadow-sm); transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+    }
+    .choice:hover { border-color: var(--line-strong); box-shadow: 0 6px 20px rgba(26, 20, 44, 0.06); }
+    .choice.featured { background: linear-gradient(160deg, var(--primary-soft) 0%, var(--surface) 58%); border-color: var(--line-strong); }
+    .choice-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+    .choice .symbol {
+      width: 42px; height: 42px; border-radius: var(--r-md); display: grid; place-items: center;
+      background: var(--primary-soft); color: var(--primary-dark);
+    }
+    .choice.featured .symbol { background: var(--primary); color: #ffffff; }
+    .choice .symbol svg { width: 22px; height: 22px; }
+    .choice h2 { font-size: 20px; margin: 0 0 8px; color: var(--ink); }
+    .choice p { color: var(--ink-secondary); font-size: 14px; line-height: 1.7; margin: 0 0 18px; }
+    .choice-points { list-style: none; padding: 0; margin: 0 0 22px; display: grid; gap: 5px; font-size: 12.5px; color: var(--muted); }
+    .choice-points li::before { content: "·"; color: var(--primary); font-weight: 700; margin-right: 6px; }
+    .choice .btn { align-self: flex-start; margin-top: auto; }
+
+    .home-footer {
+      display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap;
+      color: var(--muted); font-size: 12.5px; margin-top: 28px; padding-top: 16px; border-top: 1px solid var(--line);
+    }
+    .footer-links { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+    .footer-links a { text-decoration: none; color: var(--ink-secondary); }
+    .footer-links a:hover { color: var(--primary-dark); text-decoration: underline; }
+    .shutdown-link {
+      border: 0; background: none; padding: 0; color: var(--muted); font-size: 12.5px;
+      text-decoration: underline; text-underline-offset: 3px;
+    }
+    .shutdown-link:hover { color: var(--danger); }
+
+    @media (max-width: 720px) {
+      .home { padding: 20px 16px 36px; }
+      .home-head { margin-bottom: 24px; }
+      .home-hero h1 { font-size: 26px; }
+      .choices { grid-template-columns: 1fr; }
+      .choice { min-height: auto; padding: 20px; }
     }
   </style>
 </head>
 <body>
-  <main class="home enter">
-    <header>
+  <main class="home">
+    <header class="home-head">
       <a class="brand" href="/">
         <span class="logo-mark"><i></i><i></i><i></i></span>
-        <span>融侨学迹<small>学业质量档案</small></span>
+        <span>融侨学迹<small>学校学业质量档案</small></span>
       </a>
-      <span class="status" id="status">正在连接本机服务…</span>
+      <span class="status-pill" id="status"><i></i><span>正在连接本机服务…</span></span>
     </header>
-    <h1>从一张成绩表，<br>到看得清的教学全貌。</h1>
-    <p class="intro">需要快速出表，或持续统筹全校教学，两种工作方式都从真实成绩开始。</p>
+
+    <section class="home-hero">
+      <h1>从一张成绩表，到看得清的班情与教学全貌。</h1>
+      <p class="home-intro">所有成绩与分析完全保存在本机，按统一规范口径核算，可直接用于班情会诊断、领导汇报与分版打印。</p>
+    </section>
+
+    <section id="resume-bar" class="resume-bar" hidden>
+      <div class="resume-meta">
+        <small id="resume-kicker">最近考试档案</small>
+        <strong id="resume-title"></strong>
+        <span id="resume-sub"></span>
+      </div>
+      <div class="resume-actions">
+        <a id="resume-brief" class="btn primary" href="/leader.html?view=brief">直接看班情分析 →</a>
+        <a id="resume-compare" class="btn secondary" href="/leader.html?view=compare">班级与学科对比</a>
+      </div>
+    </section>
+
     <div class="choices">
-      <section class="choice">
-        <div class="symbol" id="quick-icon"></div>
-        <h2>快速出表</h2>
-        <p>导入一次成绩，生成排名、等级、有效分、薄弱学科和班级统计。复制进 Excel，或直接打印。</p>
-        <a class="btn primary" href="/quick.html">进入快速出表 <span aria-hidden="true">→</span></a>
-      </section>
       <section class="choice featured">
-        <div class="symbol" id="leader-icon"></div>
-        <h2>考试档案</h2>
-        <p>保存每次考试，逐层查看年级、班级与学科。比较历次变化，记录教研跟进，一键进入汇报。</p>
+        <div class="choice-head">
+          <div class="symbol" id="leader-icon"></div>
+          <span class="badge">日常主工作台</span>
+        </div>
+        <h2>考试档案与班情分析</h2>
+        <p>持续沉淀历次考试，开展 20%/40% 双线班情诊断、任课教师对照、学生历次成长追踪与一页纸套打。</p>
+        <ul class="choice-points">
+          <li>支持自定义全校默认口径与同年级一键同步</li>
+          <li>直出领导谈话卡、领导版 50–800 与教师版 200–800 打印稿</li>
+        </ul>
         <a class="btn primary" href="/leader.html">进入考试档案 <span aria-hidden="true">→</span></a>
       </section>
+
+      <section class="choice">
+        <div class="choice-head">
+          <div class="symbol" id="quick-icon"></div>
+          <span class="badge">临时单次核算</span>
+        </div>
+        <h2>快速一次性出表</h2>
+        <p>无需先建档案，拖入单张 Excel/CSV 即刻生成排名、自定义等级、有效分、前 N 名与薄弱学科，一键复制或打印。</p>
+        <ul class="choice-points">
+          <li>支持临时试算与自定义等级比例，不污染长期档案</li>
+          <li>确认满意后可一键“保存到全校平台”</li>
+        </ul>
+        <a class="btn secondary" href="/quick.html">进入快速出表 <span aria-hidden="true">→</span></a>
+      </section>
     </div>
-    <div class="footer">
-      <span>数据与分析保存在这台电脑 · 两个入口共用同一套计算规则</span>
+
+    <footer class="home-footer">
+      <span>数据与分析保存在这台电脑 · 两个入口共用同一套可自定义计算口径</span>
       <div class="footer-links">
         <a href="/help.html">使用说明与计算口径</a>
         <button id="shutdown-button" class="shutdown-link" type="button">关闭本机服务</button>
       </div>
-    </div>
+    </footer>
   </main>
   <script src="/common.js"></script>
   <script>
     document.getElementById('quick-icon').innerHTML = Z.icons('file');
     document.getElementById('leader-icon').innerHTML = Z.icons('chart');
-    const statusEl = document.getElementById('status');
+    const statusText = document.querySelector('#status span');
     Z.api('/api/health')
-      .then(() => { statusEl.textContent = '本机服务已就绪'; })
-      .catch(err => { statusEl.textContent = err.message; });
-    Z.bindShutdown(document.getElementById('shutdown-button'), statusEl);
+      .then(() => {
+        statusText.textContent = '本机服务已就绪';
+        return Z.api('/api/exams');
+      })
+      .then(data => {
+        const exams = data?.exams || [];
+        if (!exams.length) return;
+        const latest = exams[0];
+        document.getElementById('resume-kicker').textContent = `已保存 ${exams.length} 场考试档案 · 最近一场`;
+        document.getElementById('resume-title').textContent = `${latest.grade} · ${latest.name}`;
+        document.getElementById('resume-sub').textContent = `考试日期 ${latest.date} · ${latest.row_count} 条记录 · ${latest.subject_count} 个学科`;
+        document.getElementById('resume-brief').href = `/leader.html?exam=${encodeURIComponent(latest.id)}&view=brief`;
+        document.getElementById('resume-compare').href = `/leader.html?exam=${encodeURIComponent(latest.id)}&view=compare`;
+        document.getElementById('resume-bar').hidden = false;
+      })
+      .catch(err => { statusText.textContent = err.message; });
+    Z.bindShutdown(document.getElementById('shutdown-button'), statusText);
   </script>
 </body>
 </html>

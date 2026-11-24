@@ -152,7 +152,7 @@ def _score(value: Any, row: int, subject: str, warnings: list) -> float | int | 
     return int(numeric) if numeric.is_integer() else numeric
 
 
-def _xlsx_rows(content: bytes, password: str | None) -> tuple[list[list[Any]], str, int]:
+def _decrypt_and_validate_xlsx(content: bytes, password: str | None) -> bytes:
     if not content.startswith(b"PK"):
         if not password:
             raise ValueError("文件可能已加密或不是有效的 .xlsx。请提供密码，或在 Excel 中另存为未加密的 .xlsx 后导入。")
@@ -172,9 +172,17 @@ def _xlsx_rows(content: bytes, password: str | None) -> tuple[list[list[Any]], s
         with zipfile.ZipFile(io.BytesIO(content)) as archive:
             if sum(item.file_size for item in archive.infolist()) > 100 * 1024 * 1024:
                 raise ValueError("工作簿展开后超过100MB，请仅保留需要导入的原始成绩页。")
-        workbook = openpyxl.load_workbook(io.BytesIO(content), data_only=True, read_only=True, keep_links=False)
     except ValueError:
         raise
+    except Exception as exc:
+        raise ValueError("无法读取工作簿，请确认文件是完整的 .xlsx 文件。") from exc
+    return content
+
+
+def _xlsx_rows(content: bytes, password: str | None) -> tuple[list[list[Any]], str, int]:
+    content = _decrypt_and_validate_xlsx(content, password)
+    try:
+        workbook = openpyxl.load_workbook(io.BytesIO(content), data_only=True, read_only=True, keep_links=False)
     except Exception as exc:
         raise ValueError("无法读取工作簿，请确认文件是完整的 .xlsx 文件。") from exc
     candidates = []
@@ -200,33 +208,14 @@ def _xlsx_rows(content: bytes, password: str | None) -> tuple[list[list[Any]], s
         workbook.close()
 
 
-def parse_workbook(content: bytes, filename: str, metadata: dict | None = None, password: str | None = None) -> dict:
-    """Parse a standard score table. No user file is written or modified."""
-    if not isinstance(content, bytes) or not content:
-        raise ValueError("文件为空，请重新选择成绩文件。")
+def _parse_score_rows(
+    rows: list[list[Any]],
+    sheet_name: str,
+    filename: str,
+    metadata: dict | None = None,
+    candidate_count: int = 1,
+) -> dict:
     metadata = metadata if isinstance(metadata, dict) else {}
-    filename = Path(filename).name
-    suffix = Path(filename).suffix.lower()
-    if suffix == ".csv":
-        decoded = None
-        for encoding in ("utf-8-sig", "gb18030"):
-            try:
-                decoded = content.decode(encoding)
-                break
-            except UnicodeDecodeError:
-                continue
-        if decoded is None:
-            raise ValueError("CSV编码无法识别，请另存为UTF-8编码后重试。")
-        try:
-            dialect = csv.Sniffer().sniff(decoded[:8192], delimiters=",\t;")
-        except csv.Error:
-            dialect = csv.excel
-        rows = list(csv.reader(io.StringIO(decoded), dialect=dialect))
-        sheet_name, candidate_count = "CSV", 1
-    elif suffix in (".xlsx", ".xlsm"):
-        rows, sheet_name, candidate_count = _xlsx_rows(content, password)
-    else:
-        raise ValueError("支持 .xlsx、.xlsm 和 .csv。旧版 .xls 请先在 Excel 中另存为 .xlsx。")
     if len(rows) > MAX_ROWS + 20:
         raise ValueError("单次导入最多支持50,000行，请拆分成绩表后导入。")
     found = _find_header(rows)
@@ -300,7 +289,7 @@ def parse_workbook(content: bytes, filename: str, metadata: dict | None = None, 
     if mapping.get("unrecognized"):
         warnings.append({"level": "info", "message": "以下表头列未被识别为内置学科，本次已跳过：" + "、".join(mapping["unrecognized"][:12]) + "。如为正式学科，请修改为标准学科名称后重导。"})
     if candidate_count > 1:
-        warnings.append({"level": "info", "message": f"工作簿中识别到{candidate_count}张候选成绩页，本次采用“{sheet_name}”；如需其他页，请单独另存后导入。"})
+        warnings.append({"level": "info", "message": f"工作簿中识别到{candidate_count}张候选成绩页，本次采用“{sheet_name}”；如需一次导入多场考试，可使用「多考总表批量导入」。"})
     return {
         "id": dataset_id, "name": _text(metadata.get("name")) or Path(filename).stem,
         "grade": _text(metadata.get("grade")) or "未指定年级", "date": _text(metadata.get("date")),
@@ -316,6 +305,36 @@ def parse_workbook(content: bytes, filename: str, metadata: dict | None = None, 
                     "unrecognized": mapping.get("unrecognized", []),
                     "identity": "稳定学号" if "id" in mapping else "班级和姓名" if "name" in mapping else "原表行号"},
     }
+
+
+def parse_workbook(content: bytes, filename: str, metadata: dict | None = None, password: str | None = None) -> dict:
+    """Parse a standard score table. No user file is written or modified."""
+    if not isinstance(content, bytes) or not content:
+        raise ValueError("文件为空，请重新选择成绩文件。")
+    metadata = metadata if isinstance(metadata, dict) else {}
+    filename = Path(filename).name
+    suffix = Path(filename).suffix.lower()
+    if suffix == ".csv":
+        decoded = None
+        for encoding in ("utf-8-sig", "gb18030"):
+            try:
+                decoded = content.decode(encoding)
+                break
+            except UnicodeDecodeError:
+                continue
+        if decoded is None:
+            raise ValueError("CSV编码无法识别，请另存为UTF-8编码后重试。")
+        try:
+            dialect = csv.Sniffer().sniff(decoded[:8192], delimiters=",\t;")
+        except csv.Error:
+            dialect = csv.excel
+        rows = list(csv.reader(io.StringIO(decoded), dialect=dialect))
+        sheet_name, candidate_count = "CSV", 1
+    elif suffix in (".xlsx", ".xlsm"):
+        rows, sheet_name, candidate_count = _xlsx_rows(content, password)
+    else:
+        raise ValueError("支持 .xlsx、.xlsm 和 .csv。旧版 .xls 请先在 Excel 中另存为 .xlsx。")
+    return _parse_score_rows(rows, sheet_name, filename, metadata, candidate_count)
 
 
 def class_sort_key(cls: str) -> tuple:
@@ -405,6 +424,10 @@ def parse_teachers_workbook(content: bytes, filename: str, password: str | None 
     else:
         raise ValueError("支持 .xlsx、.xlsm 和 .csv 格式的任课教师表。")
 
+    return _parse_teacher_rows(rows, sheet_name)
+
+
+def _parse_teacher_rows(rows: list[list[Any]], sheet_name: str) -> dict:
     found = _find_teacher_header(rows)
     if not found:
         raise ValueError("未找到任课教师表头。请包含“班级”以及“班主任”或学科列。")
@@ -437,3 +460,376 @@ def parse_teachers_workbook(content: bytes, filename: str, password: str | None 
     if not parsed:
         raise ValueError("已识别表头，但未找到有效的班级任课教师记录。")
     return {"sheet": sheet_name, "has_exam_name": "exam_name" in mapping, "subjects": subjects, "rows": parsed}
+
+
+_NON_RAW_SHEET_TOKENS = (
+    "使用指南", "填写说明", "打印模板", "综合名次", "薄弱学科",
+    "历次测试", "达标率", "集中率", "单科数据对比", "班情分析", "分析结果",
+)
+
+
+def _extract_date_from_title(title: str) -> str:
+    m = re.search(r"(20\d{2})[-./年](\d{1,2})[-./月](\d{1,2})", title)
+    if m:
+        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if 1 <= mo <= 12 and 1 <= d <= 31:
+            return f"{y:04d}-{mo:02d}-{d:02d}"
+    m2 = re.search(r"(?<!\d)(20\d{2})(\d{2})(\d{2})(?!\d)", title)
+    if m2:
+        y, mo, d = int(m2.group(1)), int(m2.group(2)), int(m2.group(3))
+        if 1 <= mo <= 12 and 1 <= d <= 31:
+            return f"{y:04d}-{mo:02d}-{d:02d}"
+    return ""
+
+
+def _is_numeric_like(val: Any) -> bool:
+    if isinstance(val, (int, float)) and not isinstance(val, bool):
+        return True
+    s = _text(val)
+    if not s or s.lower() in MISSING_WORDS:
+        return False
+    try:
+        float(s.replace("，", ",").replace(",", ""))
+        return True
+    except ValueError:
+        return False
+
+
+def _looks_like_teacher_sheet(title: str, rows: list[list[Any]]) -> bool:
+    if any(tok in title for tok in ("教师", "任课")):
+        return _find_teacher_header(rows[:20]) is not None
+    found = _find_teacher_header(rows[:20])
+    if not found:
+        return False
+    header_idx, mapping = found
+    if "homeroom" in mapping:
+        return True
+    sub_cols = list(mapping["subjects"].values())
+    if not sub_cols:
+        return False
+    non_num = 0
+    total = 0
+    for r in rows[header_idx + 1: header_idx + 35]:
+        for c in sub_cols:
+            if c < len(r):
+                txt = _text(r[c])
+                if not txt or txt.lower() in MISSING_WORDS:
+                    continue
+                total += 1
+                if not _is_numeric_like(r[c]):
+                    non_num += 1
+    return total >= 3 and (non_num / total) >= 0.6
+
+
+def inspect_multi_workbook(
+    content: bytes,
+    filename: str,
+    *,
+    grade: str = "",
+    default_date: str = "",
+    existing_exams: list[dict] | None = None,
+    password: str | None = None,
+) -> dict:
+    """Scan all sheets in a multi-exam Excel workbook, classifying score sheets & teacher sheets."""
+    if not isinstance(content, bytes) or not content:
+        raise ValueError("文件为空，请重新选择工作簿文件。")
+    filename = Path(filename).name
+    suffix = Path(filename).suffix.lower()
+    if suffix not in (".xlsx", ".xlsm"):
+        raise ValueError("多考总表批量导入仅支持 .xlsx / .xlsm 工作簿；单个 CSV 请使用常规导入。")
+    raw_bytes = _decrypt_and_validate_xlsx(content, password)
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(raw_bytes), data_only=True, read_only=True, keep_links=False)
+    except Exception as exc:
+        raise ValueError("无法读取工作簿，请确认文件是完整的 .xlsx 文件。") from exc
+
+    existing_by_name = {}
+    for ex in (existing_exams or []):
+        nm = _text(ex.get("name"))
+        if nm:
+            existing_by_name[nm] = ex
+
+    score_sheets = []
+    teacher_sheets = []
+    ignored_sheets = []
+
+    try:
+        for order, sheet in enumerate(wb.worksheets):
+            title = sheet.title
+            if any(tok in title for tok in _NON_RAW_SHEET_TOKENS):
+                ignored_sheets.append({"sheet": title, "reason": "模板 / 派生汇总或说明页"})
+                continue
+            if (sheet.max_row or 0) > MAX_ROWS + 20:
+                ignored_sheets.append({"sheet": title, "reason": "超过 50,000 行上限"})
+                continue
+            rows = [
+                list(r)
+                for r in sheet.iter_rows(max_col=min(sheet.max_column or MAX_COLUMNS, MAX_COLUMNS), values_only=True)
+            ]
+            if not rows:
+                ignored_sheets.append({"sheet": title, "reason": "空白工作表"})
+                continue
+            if _looks_like_teacher_sheet(title, rows):
+                try:
+                    parsed_t = _parse_teacher_rows(rows, title)
+                    teacher_sheets.append({
+                        "sheet": title,
+                        "row_count": len(parsed_t["rows"]),
+                        "has_exam_name": parsed_t["has_exam_name"],
+                        "subjects": parsed_t["subjects"],
+                        "parsed": parsed_t,
+                    })
+                    continue
+                except ValueError:
+                    pass
+            found_score = _find_header(rows[:20])
+            if found_score:
+                try:
+                    suggested_name = title.strip() or Path(filename).stem
+                    suggested_date = _extract_date_from_title(title) or default_date
+                    ds = _parse_score_rows(
+                        rows,
+                        title,
+                        filename,
+                        metadata={"name": suggested_name, "grade": grade or "未指定年级", "date": suggested_date},
+                        candidate_count=1,
+                    )
+                    matched = existing_by_name.get(suggested_name)
+                    score_sheets.append({
+                        "sheet": title,
+                        "order": order,
+                        "exam_name": suggested_name,
+                        "exam_date": suggested_date,
+                        "status": "exists" if matched else "new",
+                        "existing_id": matched["id"] if matched else None,
+                        "existing_date": matched.get("date", "") if matched else "",
+                        "row_count": len(ds["rows"]),
+                        "class_count": len(ds["classes"]),
+                        "subjects": ds["subjects"],
+                        "warnings": ds["warnings"],
+                        "dataset": ds,
+                    })
+                    continue
+                except ValueError as exc:
+                    ignored_sheets.append({"sheet": title, "reason": str(exc)[:80]})
+                    continue
+            ignored_sheets.append({"sheet": title, "reason": "未识别到成绩或任课教师表头"})
+    finally:
+        wb.close()
+
+    if not score_sheets and not teacher_sheets:
+        raise ValueError("工作簿中未识别到可导入的成绩页或任课教师页，请确认表头包含“班级”和学科列。")
+    return {
+        "filename": filename,
+        "grade": grade,
+        "score_sheets": score_sheets,
+        "teacher_sheets": teacher_sheets,
+        "ignored_sheets": ignored_sheets,
+    }
+
+
+def _is_edit_distance_one(a: str, b: str) -> bool:
+    if a == b:
+        return False
+    la, lb = len(a), len(b)
+    if abs(la - lb) > 1 or min(la, lb) < 2:
+        return False
+    if la == lb:
+        diffs = sum(1 for x, y in zip(a, b) if x != y)
+        return diffs == 1
+    # Insertion / deletion of 1 character
+    short, long = (a, b) if la < lb else (b, a)
+    i = j = diffs = 0
+    while i < len(short) and j < len(long):
+        if short[i] == long[j]:
+            i += 1
+            j += 1
+        else:
+            diffs += 1
+            if diffs > 1:
+                return False
+            j += 1
+    return True
+
+
+def check_roster_hygiene(incoming_rows: list[dict], existing_datasets: list[dict]) -> dict:
+    """Compare incoming exam roster with existing grade history to flag typos, transfers & duplicates."""
+    # 1. Intra-exam duplicate names without stable student IDs across the grade
+    name_classes: dict[str, list[str]] = {}
+    for r in incoming_rows:
+        if not r.get("identity_reliable"):
+            continue
+        nm = _text(r.get("name"))
+        if not nm:
+            continue
+        if not str(r.get("id", "")).startswith("student:"):
+            name_classes.setdefault(nm, []).append(r["class"])
+    duplicate_names = [
+        {"name": nm, "classes": sorted(set(cls_list), key=class_sort_key), "count": len(cls_list)}
+        for nm, cls_list in sorted(name_classes.items())
+        if len(cls_list) >= 2
+    ]
+
+    if not existing_datasets:
+        return {
+            "has_baseline": False,
+            "baseline_exam": None,
+            "typo_candidates": [],
+            "class_transfers": [],
+            "duplicate_names": duplicate_names,
+            "new_count": 0,
+            "missing_count": 0,
+            "new_samples": [],
+            "missing_samples": [],
+        }
+
+    # Latest dataset is expected first (or we take the last in chronological order)
+    latest = existing_datasets[-1]
+    base_rows = latest.get("rows") or []
+
+    base_by_class: dict[str, set[str]] = {}
+    base_by_id: dict[str, dict] = {}
+    base_name_to_classes: dict[str, set[str]] = {}
+    for r in base_rows:
+        if not r.get("identity_reliable"):
+            continue
+        nm = _text(r.get("name"))
+        cls = r["class"]
+        if nm:
+            base_by_class.setdefault(cls, set()).add(nm)
+            base_name_to_classes.setdefault(nm, set()).add(cls)
+        if str(r.get("id", "")).startswith("student:"):
+            base_by_id[r["id"]] = r
+
+    inc_by_class: dict[str, dict[str, dict]] = {}
+    inc_name_to_classes: dict[str, set[str]] = {}
+    for r in incoming_rows:
+        if not r.get("identity_reliable"):
+            continue
+        nm = _text(r.get("name"))
+        cls = r["class"]
+        if nm:
+            inc_by_class.setdefault(cls, {})[nm] = r
+            inc_name_to_classes.setdefault(nm, set()).add(cls)
+
+    typo_candidates = []
+    class_transfers = []
+    new_students = []
+    missing_students = []
+
+    matched_base_in_class: dict[str, set[str]] = {}
+    matched_inc_in_class: dict[str, set[str]] = {}
+
+    # Detect class transfers first (via stable ID or unique name across grade)
+    transferred_inc_keys = set()
+    transferred_base_keys = set()
+    for r in incoming_rows:
+        if not r.get("identity_reliable"):
+            continue
+        rid = str(r.get("id", ""))
+        nm = _text(r.get("name"))
+        cls = r["class"]
+        if rid.startswith("student:") and rid in base_by_id:
+            prev = base_by_id[rid]
+            if prev["class"] != cls:
+                class_transfers.append({
+                    "name": nm,
+                    "id": rid,
+                    "from_class": prev["class"],
+                    "to_class": cls,
+                    "source_row": r.get("source_row"),
+                    "by": "学号匹配",
+                })
+                transferred_inc_keys.add((cls, nm))
+                transferred_base_keys.add((prev["class"], _text(prev.get("name"))))
+        elif nm and nm not in base_by_class.get(cls, set()):
+            prev_classes = base_name_to_classes.get(nm, set())
+            if len(prev_classes) == 1 and len(inc_name_to_classes.get(nm, set())) == 1:
+                prev_cls = next(iter(prev_classes))
+                if prev_cls != cls and nm not in inc_by_class.get(prev_cls, {}):
+                    class_transfers.append({
+                        "name": nm,
+                        "id": rid,
+                        "from_class": prev_cls,
+                        "to_class": cls,
+                        "source_row": r.get("source_row"),
+                        "by": "全年级唯一姓名",
+                    })
+                    transferred_inc_keys.add((cls, nm))
+                    transferred_base_keys.add((prev_cls, nm))
+
+    # Detect same-class 1-char typos between unmatched incoming and unmatched baseline
+    all_classes = sorted(set(base_by_class) | set(inc_by_class), key=class_sort_key)
+    for cls in all_classes:
+        b_names = base_by_class.get(cls, set())
+        i_map = inc_by_class.get(cls, {})
+        i_names = set(i_map.keys())
+        unmatched_inc = sorted(nm for nm in (i_names - b_names) if (cls, nm) not in transferred_inc_keys)
+        unmatched_base = sorted(nm for nm in (b_names - i_names) if (cls, nm) not in transferred_base_keys)
+        used_base = set()
+        for inc_nm in unmatched_inc:
+            candidates = [b for b in unmatched_base if b not in used_base and _is_edit_distance_one(inc_nm, b)]
+            if len(candidates) == 1:
+                sug = candidates[0]
+                used_base.add(sug)
+                matched_base_in_class.setdefault(cls, set()).add(sug)
+                matched_inc_in_class.setdefault(cls, set()).add(inc_nm)
+                typo_candidates.append({
+                    "class": cls,
+                    "incoming_name": inc_nm,
+                    "suggested_name": sug,
+                    "source_row": i_map[inc_nm].get("source_row"),
+                })
+        for inc_nm in unmatched_inc:
+            if inc_nm not in matched_inc_in_class.get(cls, set()):
+                new_students.append({"class": cls, "name": inc_nm})
+        for base_nm in unmatched_base:
+            if base_nm not in matched_base_in_class.get(cls, set()):
+                missing_students.append({"class": cls, "name": base_nm})
+
+    return {
+        "has_baseline": True,
+        "baseline_exam": latest.get("name", "上一场考试"),
+        "typo_candidates": typo_candidates[:50],
+        "class_transfers": class_transfers[:50],
+        "duplicate_names": duplicate_names[:50],
+        "new_count": len(new_students),
+        "missing_count": len(missing_students),
+        "new_samples": new_students[:15],
+        "missing_samples": missing_students[:15],
+    }
+
+
+def apply_name_fixes(dataset: dict, fixes: list[dict] | None) -> int:
+    """Apply confirmed typo name fixes in-place on a dataset before saving."""
+    if not fixes or not isinstance(fixes, list):
+        return 0
+    fix_map: dict[tuple[str, str], str] = {}
+    for item in fixes:
+        if not isinstance(item, dict):
+            continue
+        cls = normalize_class(item.get("class", ""))
+        src = _text(item.get("incoming_name") or item.get("from_name"))
+        dst = _text(item.get("suggested_name") or item.get("to_name"))
+        if cls and src and dst and src != dst:
+            fix_map[(cls, src)] = dst
+    if not fix_map:
+        return 0
+    existing_ids = {r["id"] for r in dataset.get("rows", [])}
+    applied = 0
+    for row in dataset.get("rows", []):
+        key = (row.get("class", ""), _text(row.get("name")))
+        if key in fix_map:
+            new_name = fix_map[key]
+            new_id = row["id"]
+            if str(row["id"]).startswith("name:"):
+                candidate_id = f"name:{row['class']}:{new_name}"
+                if candidate_id in existing_ids and candidate_id != row["id"]:
+                    raise ValueError(f"{row['class']}班已存在“{new_name}”，无法自动合并，请检查原表是否重复录入。")
+                existing_ids.discard(row["id"])
+                existing_ids.add(candidate_id)
+                new_id = candidate_id
+            row["name"] = new_name
+            row["id"] = new_id
+            applied += 1
+    return applied

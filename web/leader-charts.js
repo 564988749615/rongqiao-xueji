@@ -87,8 +87,41 @@
     }).join('')}</div>`;
   }
 
-  function classTrendMetrics(exams) {
+  const SCALE_META = {
+    raw: {
+      id: 'raw',
+      label: '原始分',
+      suffix: '',
+      note: '按各场考试实际原始分统计；不同试卷难度和满分可能变化，建议切换「标准分 T 分」或「年级百分位 PR」观察真实增值。',
+    },
+    t_score: {
+      id: 't_score',
+      label: '标准分 T 分',
+      suffix: '',
+      note: 'T 分以当次年级均值为 50、标准差为 10（50 + 10×Z），可消除试卷难易波动；首末变化 > 0 表示相对年级实现真实增值。',
+    },
+    pr: {
+      id: 'pr',
+      label: '年级百分位 PR',
+      suffix: '',
+      note: '年级百分位 PR（0–100，越高越靠前）取本班参评学生的平均年级百分位，消除人数、满分与难度差异，跨考纵向可比。',
+    },
+  };
+
+  function classTrendMetrics(exams, scale = 'raw') {
     const subjects = [...new Set(exams.flatMap(exam => (exam.subject_stats || []).map(item => item.subject)))];
+    if (scale === 't_score') {
+      return [
+        { id: 'mean', label: '总分 T 分', digits: 1, read: cls => cls?.t_score ?? null },
+        ...subjects.map(sub => ({ id: `sub:${sub}`, label: `${sub} T 分`, digits: 1, read: cls => cls?.subjects?.[sub]?.t_score ?? null })),
+      ];
+    }
+    if (scale === 'pr') {
+      return [
+        { id: 'mean', label: '总分平均 PR', digits: 1, read: cls => cls?.pr ?? null },
+        ...subjects.map(sub => ({ id: `sub:${sub}`, label: `${sub}平均 PR`, digits: 1, read: cls => cls?.subjects?.[sub]?.pr ?? null })),
+      ];
+    }
     return [
       { id: 'mean', label: '总分均分', digits: 1, read: cls => cls?.mean ?? null },
       { id: 'elite', label: '总分优生数', digits: 0, read: cls => cls?.elite_count ?? null },
@@ -97,8 +130,9 @@
     ];
   }
 
-  function classTrendTable(exams, metricId, gradeName = '') {
-    const metrics = classTrendMetrics(exams);
+  function classTrendTable(exams, metricId, gradeName = '', scale = 'raw') {
+    const scaleInfo = SCALE_META[scale] || SCALE_META.raw;
+    const metrics = classTrendMetrics(exams, scaleInfo.id);
     const metric = metrics.find(item => item.id === metricId) || metrics[0];
     const classNames = [...new Set(exams.flatMap(exam => (exam.class_stats || []).map(c => c.class)))]
       .sort((a, b) => a.localeCompare(b, 'zh-CN', { numeric: true }));
@@ -114,26 +148,31 @@
     return {
       metric,
       metrics,
+      scaleInfo,
       table: {
         title: `${gradeName}班级历次趋势 · ${metric.label}`,
         columns: ['班级', ...exams.map(x => `${x.name}（${x.date?.slice(5) || ''}）`), '首末变化'],
         rows: rows.map(r => [`${r.clsName}班`, ...r.series, r.delta]),
-        note: `按${metric.label}最新一场降序排列；不同考试试卷难度可能变化，仅供教研复盘参考。`,
+        note: `按${metric.label}最新一场降序排列。${scaleInfo.note}`,
       },
       rows,
     };
   }
 
-  function classTrendSection(exams, metricId, gradeName = '') {
+  function classTrendSection(exams, metricId, gradeName = '', scale = 'raw') {
     if (exams.length < 2) return '';
-    const { metric, metrics, rows } = classTrendTable(exams, metricId, gradeName);
+    const { metric, metrics, scaleInfo, rows } = classTrendTable(exams, metricId, gradeName, scale);
     const headCols = exams.map(x => `<th class="number">${e(x.name)}<br><small class="muted">${e(x.date?.slice(5) || '')}</small></th>`).join('');
     const bodyRows = rows.map(r => {
       const deltaClass = r.delta == null || r.delta === 0 ? '' : r.delta > 0 ? 'delta-positive' : 'delta-negative';
       const deltaText = r.delta == null ? '—' : r.delta === 0 ? '0' : `${r.delta > 0 ? '+' : ''}${n(r.delta, metric.digits)}`;
       return `<tr><td>${e(r.clsName)}班</td>${r.series.map(v => `<td class="number">${n(v, metric.digits)}</td>`).join('')}<td class="number ${deltaClass}">${deltaText}</td></tr>`;
     }).join('');
-    return `<section class="panel"><div class="section-title"><div><h2>班级历次趋势对比</h2><p>对比同年级各班在历次考试中的表现与首末变化</p></div><div class="toolbar-inline"><label class="small-text">对比指标 <select id="class-trend-metric" aria-label="班级趋势指标">${metrics.map(m => option(m.id, m.label, metric.id)).join('')}</select></label>${btn('复制班级趋势', 'copy-class-trends', '', 'secondary small')}${btn('下载 CSV', 'csv-class-trends', '', 'secondary small')}</div></div><div class="table-wrap"><table><thead><tr><th>班级</th>${headCols}<th class="number">首末变化</th></tr></thead><tbody>${bodyRows}</tbody></table></div><p class="table-note">首末变化取该班首次有数据考试到最近一场的差值；不同试卷难度和满分可能变化，请结合教研判断。</p></section>`;
+    const scaleBtns = ['raw', 't_score', 'pr'].map(id => {
+      const m = SCALE_META[id];
+      return `<button type="button" class="scale-pill${scaleInfo.id === id ? ' active' : ''}" data-action="trend-scale" data-scale="${id}">${e(m.label)}</button>`;
+    }).join('');
+    return `<section class="panel"><div class="section-title"><div><h2>班级历次趋势对比</h2><p>支持在原始分、标准分 T 分与年级百分位 PR 之间一键切换</p></div><div class="toolbar-inline"><div class="scale-switch" role="group" aria-label="评价尺度">${scaleBtns}</div><label class="small-text">对比指标 <select id="class-trend-metric" aria-label="班级趋势指标">${metrics.map(m => option(m.id, m.label, metric.id)).join('')}</select></label>${btn('复制班级趋势', 'copy-class-trends', '', 'secondary small')}${btn('下载 CSV', 'csv-class-trends', '', 'secondary small')}</div></div><div class="table-wrap"><table><thead><tr><th>班级</th>${headCols}<th class="number">首末变化</th></tr></thead><tbody>${bodyRows}</tbody></table></div><p class="table-note">${e(scaleInfo.note)}</p></section>`;
   }
 
   window.LeaderCharts = { identityCell, identityLabel, trendSVG, growthChartSVG, subjectTrendSummary, classTrendMetrics, classTrendTable, classTrendSection };

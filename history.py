@@ -1,4 +1,4 @@
-"""Multi-exam history, composite ranking and student growth trajectories."""
+"""Multi-exam history, composite ranking, scientific scales (PR / T-score) and student trajectories."""
 from __future__ import annotations
 
 from decimal import Decimal, ROUND_HALF_UP
@@ -7,6 +7,89 @@ import math
 
 def _rounded(value: float, quant: str = '0.01') -> float:
     return float(Decimal(str(value)).quantize(Decimal(quant), rounding=ROUND_HALF_UP))
+
+
+def calc_pr(rank: int | float | None, participants: int) -> float | None:
+    """Grade percentile rank (0–100, higher is better): 100 for #1, 0 for last."""
+    if rank is None or participants <= 0:
+        return None
+    if participants == 1:
+        return 100.0
+    raw = (1.0 - (float(rank) - 1.0) / (participants - 1.0)) * 100.0
+    return _rounded(max(0.0, min(100.0, raw)), '0.1')
+
+
+def calc_t_score(value: float | None, mean: float | None, std: float | None) -> float | None:
+    """Standard T-score: 50 + 10 * (value - mean) / std. Grade mean = 50, SD = 10."""
+    if value is None or mean is None:
+        return None
+    if std is None or std <= 1e-9:
+        return 50.0
+    return _rounded(50.0 + 10.0 * (float(value) - float(mean)) / float(std), '0.1')
+
+
+def _mean_std(values: list[float]) -> tuple[float | None, float | None]:
+    if not values:
+        return None, None
+    n = len(values)
+    mean = sum(values) / n
+    var = sum((v - mean) ** 2 for v in values) / n
+    return mean, math.sqrt(var)
+
+
+def enrich_trends_scales(analysis: dict) -> list[dict]:
+    """Return a copy of analysis['class_stats'] enriched with PR and T-score for total and each subject."""
+    students = analysis.get('students') or []
+    participants = int(analysis.get('summary', {}).get('participants') or 0)
+    total_vals = [float(s['total']) for s in students if s.get('rank') is not None and s.get('total') is not None]
+    grade_mean, grade_std = _mean_std(total_vals)
+
+    # Subject grade mean, std, and participant count
+    sub_meta: dict[str, tuple[float | None, float | None, int]] = {}
+    for st in analysis.get('subject_stats') or []:
+        sub = st['subject']
+        vals = [float(s['scores'][sub]) for s in students if s.get('scores', {}).get(sub) is not None]
+        m, sd = _mean_std(vals)
+        sub_meta[sub] = (m, sd, int(st.get('count') or len(vals)))
+
+    # Per-class PR accumulators
+    class_total_prs: dict[str, list[float]] = {}
+    class_sub_prs: dict[str, dict[str, list[float]]] = {}
+    for s in students:
+        cls = s['class']
+        if s.get('rank') is not None and participants > 0:
+            pr = calc_pr(s['rank'], participants)
+            if pr is not None:
+                class_total_prs.setdefault(cls, []).append(pr)
+        for sub, (_, _, sub_cnt) in sub_meta.items():
+            sr = (s.get('ranks') or {}).get(sub)
+            if sr is not None and sub_cnt > 0:
+                spr = calc_pr(sr, sub_cnt)
+                if spr is not None:
+                    class_sub_prs.setdefault(cls, {}).setdefault(sub, []).append(spr)
+
+    enriched = []
+    for c in analysis.get('class_stats') or []:
+        cls = c['class']
+        prs = class_total_prs.get(cls) or []
+        cls_pr = _rounded(sum(prs) / len(prs), '0.1') if prs else None
+        cls_t = calc_t_score(c.get('mean'), grade_mean, grade_std)
+        new_subs = {}
+        for sub, sq in (c.get('subjects') or {}).items():
+            sm, ssd, _ = sub_meta.get(sub, (None, None, 0))
+            sprs = (class_sub_prs.get(cls) or {}).get(sub) or []
+            new_subs[sub] = {
+                **sq,
+                't_score': calc_t_score(sq.get('mean'), sm, ssd),
+                'pr': _rounded(sum(sprs) / len(sprs), '0.1') if sprs else None,
+            }
+        enriched.append({
+            **c,
+            't_score': cls_t,
+            'pr': cls_pr,
+            'subjects': new_subs,
+        })
+    return enriched
 
 
 def calculate_history(saved_rows: list, payload: dict, analyze_fn, summary_fn) -> dict:
@@ -39,7 +122,10 @@ def calculate_history(saved_rows: list, payload: dict, analyze_fn, summary_fn) -
             raise ValueError('考试权重必须大于0且不超过1000。')
         result = analyze_fn(row, include_tables=False)
         info = summary_fn(row)
-        exams.append({k: info[k] for k in ('id', 'name', 'date')} | {'weight': weight})
+        participants = int(result['summary']['participants'] or 0)
+        total_vals = [float(s['total']) for s in result['students'] if s.get('rank') is not None and s.get('total') is not None]
+        grade_mean, grade_std = _mean_std(total_vals)
+        exams.append({k: info[k] for k in ('id', 'name', 'date')} | {'weight': weight, 'participants': participants})
         subject_trends.append({
             'exam_id': row['id'], 'name': info['name'], 'date': info['date'],
             'subjects': [
@@ -60,7 +146,9 @@ def calculate_history(saved_rows: list, payload: dict, analyze_fn, summary_fn) -
             record['name'] = s['name']
             record['history'].append(dict(
                 exam_id=row['id'], name=info['name'], date=info['date'], class_name=s['class'],
-                **{'class': s['class']}, rank=s['rank'], participants=result['summary']['participants'],
+                **{'class': s['class']}, rank=s['rank'], participants=participants,
+                pr=calc_pr(s['rank'], participants),
+                t_score=calc_t_score(s['total'], grade_mean, grade_std),
                 weight=weight, total=s['total'], scores=s['scores'], weak=s['weak'],
                 grades=s['grades'], levels=s['levels'],
             ))
@@ -69,12 +157,22 @@ def calculate_history(saved_rows: list, payload: dict, analyze_fn, summary_fn) -
     for record in students.values():
         values = [h['rank'] for h in record['history']]
         weights = [h['weight'] for h in record['history']]
+        prs = [h['pr'] for h in record['history'] if h.get('pr') is not None]
+        ts = [h['t_score'] for h in record['history'] if h.get('t_score') is not None]
         a = _rounded(sum(values) / len(values))
         t = _rounded((sum(values) - max(values) - min(values)) / (len(values) - 2)) if len(values) >= 3 else None
         w = _rounded(sum(x * y for x, y in zip(values, weights)) / sum(weights))
         components = [Decimal(str(x)) for x in (a, t, w) if x is not None]
         composite = float((sum(components) / Decimal(len(components))).quantize(Decimal('0.0001'), rounding=ROUND_HALF_UP))
-        record.update(attempts=len(values), mean=a, trimmed=t, weighted=w, composite=composite)
+        record.update(
+            attempts=len(values), mean=a, trimmed=t, weighted=w, composite=composite,
+            mean_pr=_rounded(sum(prs) / len(prs), '0.1') if prs else None,
+            latest_pr=prs[-1] if prs else None,
+            pr_delta=_rounded(prs[-1] - prs[0], '0.1') if len(prs) >= 2 else None,
+            mean_t=_rounded(sum(ts) / len(ts), '0.1') if ts else None,
+            latest_t=ts[-1] if ts else None,
+            t_delta=_rounded(ts[-1] - ts[0], '0.1') if len(ts) >= 2 else None,
+        )
         result_rows.append(record)
 
     ordered = sorted(r['composite'] for r in result_rows)
@@ -87,7 +185,7 @@ def calculate_history(saved_rows: list, payload: dict, analyze_fn, summary_fn) -
 
     warnings = [
         '默认权重按考试先后取1、2、3…，可自行修改；这不是学校已确认的十次权重方案。',
-        '班级与姓名匹配只能串联同班同名记录；跨班历史请提供稳定学号。不同试卷难度和参评人数会影响名次比较。',
+        '年级百分位（PR，0–100，越高越好）与标准分（T分，年级均值为50、标准差为10）可消除试卷难易波动，更适合跨考试观察真实增值。',
     ]
     if anonymous:
         warnings.insert(0, f'{anonymous} 条记录没有姓名或学号，未纳入个人历史匹配；班级趋势仍可查看。')

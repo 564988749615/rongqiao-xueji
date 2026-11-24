@@ -26,15 +26,28 @@ MAX_REQUEST = 32 * 1024 * 1024
 sys.path.insert(0, str(ROOT / '.runtime'))
 
 from class_brief import build_class_brief
+from distribution import build_class_packages_zip, build_student_cards
 from engine import (
     PORTABLE_RULE_KEYS,
     analyze,
     validate_dataset as _validate_dataset_core,
     validate_portable_rules,
 )
-from exporter import export_workbook
-from history import calculate_history as _calculate_history_core
-from workbook import normalize_class, parse_teachers_workbook, parse_workbook
+from exporter import (
+    export_workbook,
+    generate_score_template_xlsx,
+    generate_teacher_template_xlsx,
+)
+from history import calculate_history as _calculate_history_core, enrich_trends_scales
+import s3_store
+from workbook import (
+    apply_name_fixes,
+    check_roster_hygiene,
+    inspect_multi_workbook,
+    normalize_class,
+    parse_teachers_workbook,
+    parse_workbook,
+)
 
 _CACHE_LOCK = threading.Lock()
 _ANALYSIS_CACHE: OrderedDict[tuple, dict] = OrderedDict()
@@ -114,6 +127,10 @@ def init_db() -> None:
         for col_name, col_def in _EXAM_META_COLUMNS:
             if col_name not in existing_cols:
                 conn.execute(f'ALTER TABLE exams ADD COLUMN {col_name} {col_def}')
+        note_cols = {row['name'] for row in conn.execute('PRAGMA table_info(notes)').fetchall()}
+        if 'updated_at' not in note_cols:
+            conn.execute("ALTER TABLE notes ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
+            conn.execute("UPDATE notes SET updated_at=created_at WHERE updated_at=''")
         # Backfill metadata columns for any legacy rows migrated from earlier versions.
         to_backfill = conn.execute(
             "SELECT id, dataset, created_at FROM exams WHERE name='' AND row_count=0"
@@ -173,6 +190,392 @@ def save_default_rules(raw: dict) -> dict:
 
 def _portable_subset(rules: dict) -> dict:
     return {k: rules[k] for k in PORTABLE_RULE_KEYS if k in rules}
+
+
+def _get_setting_json(key: str) -> dict:
+    with db() as conn:
+        row = conn.execute('SELECT value FROM settings WHERE key=?', (key,)).fetchone()
+    if row is None:
+        return {}
+    try:
+        parsed = json.loads(row['value'])
+        return parsed if isinstance(parsed, dict) else {}
+    except ValueError:
+        return {}
+
+
+def _set_setting_json(key: str, value: dict) -> None:
+    with db() as conn:
+        conn.execute(
+            '''INSERT INTO settings(key, value, updated_at) VALUES(?,?,?)
+               ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at''',
+            (key, encode(value), now()),
+        )
+
+
+def get_s3_config() -> dict:
+    return _get_setting_json('s3_config')
+
+
+def get_s3_status() -> dict:
+    return _get_setting_json('s3_status')
+
+
+def save_s3_status(status: dict) -> None:
+    _set_setting_json('s3_status', status)
+
+
+def save_s3_config(raw: dict) -> dict:
+    existing = get_s3_config()
+    merged = dict(raw or {})
+    if not str(merged.get('secret_key') or '').strip() and existing.get('secret_key'):
+        merged['secret_key'] = existing['secret_key']
+    cleaned = s3_store.validate_config(merged, require_credentials=True)
+    _set_setting_json('s3_config', cleaned)
+    return cleaned
+
+
+def _build_backup_dict() -> dict:
+    with db() as conn:
+        exams = [
+            dict(
+                id=r['id'],
+                dataset=json.loads(r['dataset']),
+                rules=json.loads(r['rules']),
+                archived=bool(r['archived']),
+                created_at=r['created_at'],
+                updated_at=r['updated_at'],
+            )
+            for r in conn.execute('SELECT * FROM exams')
+        ]
+        notes = [dict(r) for r in conn.execute('SELECT * FROM notes')]
+        teachers = [dict(r) for r in conn.execute('SELECT * FROM teachers')]
+        def_row = conn.execute("SELECT updated_at FROM settings WHERE key='default_rules'").fetchone()
+    return dict(
+        format='zhixu-backup',
+        version=1,
+        exported_at=now(),
+        exams=exams,
+        notes=notes,
+        teachers=teachers,
+        default_rules=get_default_rules(),
+        default_rules_updated_at=def_row['updated_at'] if def_row else '',
+    )
+
+
+def _validate_backup_payload(backup: dict) -> tuple[list, list]:
+    if not isinstance(backup, dict) or backup.get('format') != 'zhixu-backup' or backup.get('version') != 1:
+        raise ValueError('这不是本软件支持的备份文件。')
+    exams = backup.get('exams', [])
+    notes = backup.get('notes', [])
+    if not isinstance(exams, list) or len(exams) > 2000 or not isinstance(notes, list) or len(notes) > 50000:
+        raise ValueError('备份记录格式或数量不正确。')
+    return exams, notes
+
+
+def _diff_backup_dict(backup: dict) -> dict:
+    """Compare a cloud/local backup snapshot against current local SQLite DB without writing."""
+    exams, notes = _validate_backup_payload(backup)
+    with db() as conn:
+        local_exams = {r['id']: r for r in conn.execute('SELECT * FROM exams').fetchall()}
+        local_notes = {r['id']: r for r in conn.execute('SELECT * FROM notes').fetchall()}
+        local_teachers = {
+            (r['exam_id'], r['class_name']): r for r in conn.execute('SELECT * FROM teachers').fetchall()
+        }
+        local_def_row = conn.execute("SELECT value, updated_at FROM settings WHERE key='default_rules'").fetchone()
+
+    only_cloud_exams = []
+    updated_exams = []
+    same_exams = 0
+    cloud_exam_ids = set()
+
+    for item in exams:
+        eid = item.get('id')
+        ds = item.get('dataset') or {}
+        if not eid:
+            continue
+        cloud_exam_ids.add(eid)
+        cloud_upd = str(item.get('updated_at') or item.get('created_at') or '')
+        if eid not in local_exams:
+            only_cloud_exams.append({
+                'id': eid,
+                'name': ds.get('name', '未命名考试'),
+                'grade': ds.get('grade', ''),
+                'date': ds.get('date', ''),
+                'row_count': len(ds.get('rows') or []),
+            })
+        else:
+            loc = local_exams[eid]
+            loc_upd = str(loc['updated_at'] or loc['created_at'] or '')
+            changes = []
+            if encode(item.get('rules') or {}) != loc['rules']:
+                changes.append('口径')
+            if (
+                ds.get('name', '') != loc['name']
+                or ds.get('grade', '') != loc['grade']
+                or ds.get('date', '') != loc['exam_date']
+                or bool(item.get('archived')) != bool(loc['archived'])
+            ):
+                changes.append('信息/状态')
+            if len(ds.get('rows') or []) != loc['row_count']:
+                changes.append('成绩记录')
+            if changes and (not loc_upd or cloud_upd > loc_upd):
+                updated_exams.append({
+                    'id': eid,
+                    'name': ds.get('name', loc['name']),
+                    'grade': ds.get('grade', loc['grade']),
+                    'date': ds.get('date', loc['exam_date']),
+                    'changes': changes,
+                    'cloud_updated_at': cloud_upd,
+                    'local_updated_at': loc_upd,
+                })
+            else:
+                same_exams += 1
+
+    only_local_exams = [
+        {
+            'id': r['id'],
+            'name': r['name'] or '未命名考试',
+            'grade': r['grade'] or '',
+            'date': r['exam_date'] or '',
+        }
+        for eid, r in local_exams.items()
+        if eid not in cloud_exam_ids
+    ]
+
+    notes_only_cloud = 0
+    notes_updated = 0
+    cloud_note_ids = set()
+    for item in notes:
+        nid = item.get('id')
+        if not nid:
+            continue
+        cloud_note_ids.add(nid)
+        if nid not in local_notes:
+            notes_only_cloud += 1
+        else:
+            loc_n = local_notes[nid]
+            c_upd = str(item.get('updated_at') or item.get('created_at') or '')
+            l_upd = str(loc_n['updated_at'] or loc_n['created_at'] or '')
+            c_cls = item.get('class_name', item.get('class', ''))
+            if (item.get('text') != loc_n['text'] or c_cls != loc_n['class_name']) and c_upd > l_upd:
+                notes_updated += 1
+    notes_only_local = sum(1 for nid in local_notes if nid not in cloud_note_ids)
+
+    teachers_only_cloud = 0
+    teachers_updated = 0
+    for item in backup.get('teachers', []):
+        if not isinstance(item, dict) or not item.get('exam_id'):
+            continue
+        cls = normalize_class(item.get('class_name', item.get('class', '')))
+        key = (item['exam_id'], cls)
+        if key not in local_teachers:
+            teachers_only_cloud += 1
+        else:
+            loc_t = local_teachers[key]
+            c_upd = str(item.get('updated_at') or '')
+            l_upd = str(loc_t['updated_at'] or '')
+            c_subs = item.get('subjects', '{}')
+            c_subs_str = encode(c_subs) if isinstance(c_subs, dict) else str(c_subs)
+            if (str(item.get('homeroom', '')) != loc_t['homeroom'] or c_subs_str != loc_t['subjects']) and c_upd > l_upd:
+                teachers_updated += 1
+
+    cloud_def = backup.get('default_rules')
+    cloud_def_upd = str(backup.get('default_rules_updated_at') or backup.get('exported_at') or '')
+    def_changed = False
+    def_cloud_newer = False
+    if isinstance(cloud_def, dict) and cloud_def:
+        cleaned = encode(validate_portable_rules(cloud_def))
+        if local_def_row is None:
+            def_changed = True
+            def_cloud_newer = True
+        elif cleaned != local_def_row['value']:
+            def_changed = True
+            def_cloud_newer = cloud_def_upd > str(local_def_row['updated_at'] or '')
+
+    return dict(
+        exported_at=backup.get('exported_at', ''),
+        cloud_exam_count=len(exams),
+        local_exam_count=len(local_exams),
+        exams=dict(
+            only_cloud=only_cloud_exams,
+            only_local=only_local_exams,
+            updated_in_cloud=updated_exams,
+            same_count=same_exams,
+        ),
+        notes=dict(
+            only_cloud=notes_only_cloud,
+            only_local=notes_only_local,
+            updated_in_cloud=notes_updated,
+        ),
+        teachers=dict(
+            only_cloud=teachers_only_cloud,
+            updated_in_cloud=teachers_updated,
+        ),
+        default_rules_diff=dict(changed=def_changed, cloud_newer=def_cloud_newer),
+    )
+
+
+def _restore_backup_dict(backup: dict, *, mode: str = 'append_only') -> dict:
+    exams, notes = _validate_backup_payload(backup)
+    smart = mode == 'smart_merge'
+    for item in exams:
+        validate_dataset(item['dataset'])
+        if item.get('id') != item['dataset']['id']:
+            raise ValueError('备份的考试标识不一致。')
+        analyze(item['dataset'], item.get('rules'), include_tables=False)
+    for item in notes:
+        if not all(isinstance(item.get(k), str) for k in ('id', 'exam_id', 'text', 'created_at')) or len(item['text']) > 20000:
+            raise ValueError('备份中的跟进记录格式不正确。')
+
+    exams_added = 0
+    exams_updated = 0
+    notes_added = 0
+    notes_updated = 0
+    teachers_added = 0
+    teachers_updated = 0
+    default_rules_updated = False
+    timestamp = now()
+
+    with db() as conn:
+        for item in exams:
+            created = item.get('created_at', timestamp)
+            cloud_upd = str(item.get('updated_at') or created)
+            meta = _dataset_meta(item['dataset'], created)
+            existing = conn.execute('SELECT updated_at, created_at FROM exams WHERE id=?', (item['id'],)).fetchone()
+            if existing is None:
+                conn.execute(
+                    '''INSERT INTO exams(
+                         id, dataset, rules, archived, created_at, updated_at,
+                         name, grade, exam_date, filename, imported_at, row_count, subject_count
+                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                    (
+                        item['id'],
+                        encode(item['dataset']),
+                        encode(item.get('rules', {})),
+                        int(bool(item.get('archived'))),
+                        created,
+                        cloud_upd,
+                        *meta,
+                    ),
+                )
+                exams_added += 1
+            elif smart:
+                loc_upd = str(existing['updated_at'] or existing['created_at'] or '')
+                if not loc_upd or cloud_upd > loc_upd:
+                    conn.execute(
+                        '''UPDATE exams SET
+                             dataset=?, rules=?, archived=?, updated_at=?,
+                             name=?, grade=?, exam_date=?, filename=?, imported_at=?, row_count=?, subject_count=?
+                           WHERE id=?''',
+                        (
+                            encode(item['dataset']),
+                            encode(item.get('rules', {})),
+                            int(bool(item.get('archived'))),
+                            cloud_upd,
+                            *meta,
+                            item['id'],
+                        ),
+                    )
+                    exams_updated += 1
+
+        for item in notes:
+            if not conn.execute('SELECT 1 FROM exams WHERE id=?', (item['exam_id'],)).fetchone():
+                continue
+            cls_name = item.get('class_name', item.get('class', ''))
+            cloud_upd = str(item.get('updated_at') or item['created_at'])
+            existing_n = conn.execute('SELECT updated_at, created_at FROM notes WHERE id=?', (item['id'],)).fetchone()
+            if existing_n is None:
+                conn.execute(
+                    'INSERT INTO notes(id, exam_id, class_name, text, created_at, updated_at) VALUES(?,?,?,?,?,?)',
+                    (item['id'], item['exam_id'], cls_name, item['text'], item['created_at'], cloud_upd),
+                )
+                notes_added += 1
+            elif smart:
+                loc_upd = str(existing_n['updated_at'] or existing_n['created_at'] or '')
+                if cloud_upd > loc_upd:
+                    conn.execute(
+                        'UPDATE notes SET class_name=?, text=?, updated_at=? WHERE id=?',
+                        (cls_name, item['text'], cloud_upd, item['id']),
+                    )
+                    notes_updated += 1
+
+        for item in backup.get('teachers', []):
+            if not isinstance(item, dict) or not item.get('exam_id'):
+                continue
+            if not conn.execute('SELECT 1 FROM exams WHERE id=?', (item['exam_id'],)).fetchone():
+                continue
+            cls = normalize_class(item.get('class_name', item.get('class', '')))
+            homeroom = str(item.get('homeroom', ''))[:60]
+            subs_val = item.get('subjects', '{}')
+            if isinstance(subs_val, dict):
+                subs_val = encode(subs_val)
+            cloud_upd = str(item.get('updated_at') or timestamp)
+            existing_t = conn.execute(
+                'SELECT updated_at FROM teachers WHERE exam_id=? AND class_name=?', (item['exam_id'], cls)
+            ).fetchone()
+            if existing_t is None:
+                conn.execute(
+                    'INSERT INTO teachers VALUES(?,?,?,?,?)',
+                    (item['exam_id'], cls, homeroom, str(subs_val), cloud_upd),
+                )
+                teachers_added += 1
+            elif smart and cloud_upd > str(existing_t['updated_at'] or ''):
+                conn.execute(
+                    'UPDATE teachers SET homeroom=?, subjects=?, updated_at=? WHERE exam_id=? AND class_name=?',
+                    (homeroom, str(subs_val), cloud_upd, item['exam_id'], cls),
+                )
+                teachers_updated += 1
+
+        if isinstance(backup.get('default_rules'), dict) and backup['default_rules']:
+            cleaned_def = validate_portable_rules(backup['default_rules'])
+            cloud_def_upd = str(backup.get('default_rules_updated_at') or backup.get('exported_at') or timestamp)
+            existing_def = conn.execute("SELECT updated_at FROM settings WHERE key='default_rules'").fetchone()
+            if existing_def is None:
+                conn.execute(
+                    "INSERT INTO settings(key, value, updated_at) VALUES('default_rules', ?, ?)",
+                    (encode(cleaned_def), cloud_def_upd),
+                )
+                default_rules_updated = True
+            elif smart and cloud_def_upd > str(existing_def['updated_at'] or ''):
+                conn.execute(
+                    "UPDATE settings SET value=?, updated_at=? WHERE key='default_rules'",
+                    (encode(cleaned_def), cloud_def_upd),
+                )
+                default_rules_updated = True
+
+    invalidate_cache()
+    return dict(
+        count=exams_added + exams_updated,
+        exams_added=exams_added,
+        exams_updated=exams_updated,
+        notes_added=notes_added,
+        notes_updated=notes_updated,
+        teachers_added=teachers_added,
+        teachers_updated=teachers_updated,
+        default_rules_updated=default_rules_updated,
+    )
+
+
+def _trigger_auto_sync(label: str = 'auto') -> None:
+    cfg = get_s3_config()
+    if not cfg.get('auto_sync') or not s3_store.mask_config(cfg).get('configured'):
+        return
+
+    def worker():
+        try:
+            res = s3_store.put_snapshot(cfg, _build_backup_dict(), label=label)
+            save_s3_status(dict(last_sync_at=res['synced_at'], last_sync_key=res['key'], last_sync_size=res['size'], last_error=''))
+        except Exception as exc:
+            prev = get_s3_status()
+            save_s3_status(dict(
+                last_sync_at=prev.get('last_sync_at', ''),
+                last_sync_key=prev.get('last_sync_key', ''),
+                last_sync_size=prev.get('last_sync_size', 0),
+                last_error=str(exc)[:240],
+            ))
+
+    threading.Thread(target=worker, daemon=True).start()
 
 
 def _dataset_meta(dataset: dict, fallback_created_at: str) -> tuple:
@@ -360,13 +763,46 @@ class Handler(BaseHTTPRequestHandler):
             archived = 1 if query.get('archived') == ['1'] else 0
             with db() as conn:
                 rows = conn.execute(
-                    f'{_SUMMARY_SQL} WHERE archived=? ORDER BY created_at DESC', (archived,)
+                    f'{_SUMMARY_SQL} WHERE archived=? ORDER BY exam_date DESC, created_at DESC, rowid DESC', (archived,)
                 ).fetchall()
             return self.send(dict(exams=[exam_summary(r) for r in rows]))
+        match = re.fullmatch(r'/api/exams/([^/]+)/class-packages\.zip', path)
+        if match:
+            exam_id = match.group(1)
+            target_row = get_exam(exam_id)
+            target_info = exam_summary(target_row)
+            grade = target_info['grade']
+            high_ratio = float(query['high_ratio'][0]) if query.get('high_ratio') else None
+            main_ratio = float(query['main_ratio'][0]) if query.get('main_ratio') else None
+            with db() as conn:
+                saved = conn.execute(
+                    'SELECT * FROM exams WHERE archived=0 AND grade=? ORDER BY exam_date, created_at, id',
+                    (grade,),
+                ).fetchall()
+                grade_exams = [
+                    (exam_summary(r), exam_analysis(r, include_tables=False), get_teachers_map(conn, r['id']))
+                    for r in saved
+                ]
+            filename, zip_bytes = build_class_packages_zip(
+                grade_exams, exam_id, high_ratio=high_ratio, main_ratio=main_ratio
+            )
+            return self.send(zip_bytes, mime='application/zip', filename=filename)
         match = re.fullmatch(r'/api/exams/([^/]+)', path)
         if match:
             row = get_exam(match.group(1))
             return self.send(dict(dataset=json.loads(row['dataset']), rules=json.loads(row['rules'])))
+        if path == '/api/templates/scores.xlsx':
+            return self.send(
+                generate_score_template_xlsx(),
+                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                filename='融侨学迹_成绩导入模板.xlsx',
+            )
+        if path == '/api/templates/teachers.xlsx':
+            return self.send(
+                generate_teacher_template_xlsx(),
+                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                filename='融侨学迹_任课教师模板.xlsx',
+            )
         if path == '/api/trends':
             grade = query.get('grade', [''])[0]
             with db() as conn:
@@ -380,8 +816,8 @@ class Handler(BaseHTTPRequestHandler):
                 result = exam_analysis(row, include_tables=False)
                 data.append(
                     {k: info[k] for k in ('id', 'name', 'date', 'grade')}
-                    | {k: result[k] for k in ('summary', 'subject_stats', 'class_stats')}
-                    | {'rules': result['rules']}
+                    | {'summary': result['summary'], 'subject_stats': result['subject_stats']}
+                    | {'class_stats': enrich_trends_scales(result), 'rules': result['rules']}
                 )
             return self.send(dict(exams=data))
         if path == '/api/school':
@@ -447,29 +883,15 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/default-rules':
             saved = get_default_rules()
             return self.send(dict(rules=validate_portable_rules(saved), has_custom=bool(saved)))
+        if path == '/api/s3/config':
+            return self.send(dict(config=s3_store.mask_config(get_s3_config()), status=get_s3_status()))
+        if path == '/api/s3/backups':
+            cfg = get_s3_config()
+            if not s3_store.mask_config(cfg).get('configured'):
+                raise ValueError('尚未配置 S3 对象存储，请先填写连接信息。')
+            return self.send(dict(snapshots=s3_store.list_snapshots(cfg), status=get_s3_status()))
         if path == '/api/backup':
-            with db() as conn:
-                exams = [
-                    dict(
-                        id=r['id'],
-                        dataset=json.loads(r['dataset']),
-                        rules=json.loads(r['rules']),
-                        archived=bool(r['archived']),
-                        created_at=r['created_at'],
-                    )
-                    for r in conn.execute('SELECT * FROM exams')
-                ]
-                notes = [dict(r) for r in conn.execute('SELECT * FROM notes')]
-                teachers = [dict(r) for r in conn.execute('SELECT * FROM teachers')]
-            backup = dict(
-                format='zhixu-backup',
-                version=1,
-                exported_at=now(),
-                exams=exams,
-                notes=notes,
-                teachers=teachers,
-                default_rules=get_default_rules(),
-            )
+            backup = _build_backup_dict()
             return self.send(
                 encode(backup).encode(), mime='application/json; charset=utf-8', filename='融侨学迹备份.json'
             )
@@ -518,6 +940,54 @@ class Handler(BaseHTTPRequestHandler):
             dataset = parse_workbook(content, filename, payload.get('metadata') or {}, payload.get('password'))
             validate_dataset(dataset)
             return self.send(dataset)
+        if path == '/api/workbook/inspect':
+            filename = Path(str(payload.get('filename', '总表.xlsx'))).name
+            content = base64.b64decode(payload.get('content', ''), validate=True)
+            if len(content) > 20 * 1024 * 1024:
+                raise ValueError('文件超过20MB，请精简后导入。')
+            grade = str(payload.get('grade', '')).strip()
+            default_date = str(payload.get('default_date', '')).strip()
+            with db() as conn:
+                if grade:
+                    ex_rows = conn.execute(
+                        'SELECT id, name, exam_date, dataset FROM exams WHERE archived=0 AND grade=? ORDER BY exam_date, created_at, id',
+                        (grade,),
+                    ).fetchall()
+                else:
+                    ex_rows = conn.execute(
+                        'SELECT id, name, exam_date, dataset FROM exams WHERE archived=0 ORDER BY exam_date, created_at, id'
+                    ).fetchall()
+            existing_exams = [{'id': r['id'], 'name': r['name'], 'date': r['exam_date']} for r in ex_rows]
+            existing_datasets = [json.loads(r['dataset']) for r in ex_rows]
+            inspected = inspect_multi_workbook(
+                content,
+                filename,
+                grade=grade,
+                default_date=default_date,
+                existing_exams=existing_exams,
+                password=payload.get('password'),
+            )
+            # Attach roster hygiene report to each score sheet (comparing against existing grade history or previous sheet)
+            running_baselines = list(existing_datasets)
+            for item in inspected['score_sheets']:
+                item['hygiene'] = check_roster_hygiene(item['dataset']['rows'], running_baselines)
+                running_baselines.append(item['dataset'])
+            return self.send(inspected)
+        if path == '/api/roster-check':
+            grade = str(payload.get('grade', '')).strip()
+            rows = payload.get('rows', [])
+            if not isinstance(rows, list):
+                raise ValueError('学生名单格式不正确。')
+            with db() as conn:
+                if grade:
+                    ex_rows = conn.execute(
+                        'SELECT dataset FROM exams WHERE archived=0 AND grade=? ORDER BY exam_date, created_at, id',
+                        (grade,),
+                    ).fetchall()
+                else:
+                    ex_rows = []
+            existing_datasets = [json.loads(r['dataset']) for r in ex_rows]
+            return self.send(check_roster_hygiene(rows, existing_datasets))
         if path == '/api/analyze':
             if payload.get('exam_id'):
                 return self.send(exam_analysis(get_exam(payload['exam_id']), payload.get('rules')))
@@ -530,7 +1000,10 @@ class Handler(BaseHTTPRequestHandler):
             saved = save_default_rules(payload.get('rules', {}))
             return self.send(dict(ok=True, rules=saved, has_custom=True))
         if path == '/api/exams':
-            dataset = validate_dataset(payload.get('dataset'))
+            dataset = payload.get('dataset')
+            if isinstance(dataset, dict) and payload.get('name_fixes'):
+                apply_name_fixes(dataset, payload.get('name_fixes'))
+            dataset = validate_dataset(dataset)
             if not dataset.get('grade') or not dataset.get('name') or not dataset.get('date'):
                 raise ValueError('保存考试前，请填写考试名称、年级和日期。')
             try:
@@ -558,7 +1031,108 @@ class Handler(BaseHTTPRequestHandler):
                     (dataset['id'], encode(dataset), encode(result['rules']), timestamp, timestamp, *meta),
                 )
             invalidate_cache(dataset['id'])
+            _trigger_auto_sync('exam')
             return self.send(exam_summary(get_exam(dataset['id'])))
+        if path == '/api/exams/batch-import':
+            grade = str(payload.get('grade', '')).strip()
+            items = payload.get('exams', [])
+            teacher_sheets = payload.get('teacher_sheets', [])
+            if not grade:
+                raise ValueError('请填写这批考试所属的年级 / 届别。')
+            if not isinstance(items, list) or (not items and not teacher_sheets):
+                raise ValueError('请至少勾选一场考试或一张任课教师表进行导入。')
+            if len(items) > 100:
+                raise ValueError('单次批量导入最多支持 100 场考试。')
+            default_rules = get_default_rules() or None
+            timestamp = now()
+            imported = 0
+            overwritten = 0
+            exam_ids = []
+            fixes_applied = 0
+            prepared = []
+            for entry in items:
+                if not isinstance(entry, dict) or not isinstance(entry.get('dataset'), dict):
+                    raise ValueError('批量导入的考试数据格式不正确。')
+                ds = dict(entry['dataset'])
+                ds['name'] = str(entry.get('name') or ds.get('name') or '').strip()
+                ds['grade'] = grade
+                ds['date'] = str(entry.get('date') or ds.get('date') or '').strip()
+                if not ds['name'] or not ds['date']:
+                    raise ValueError(f"考试「{ds.get('name') or '未命名'}」缺少名称或日期。")
+                try:
+                    datetime.strptime(ds['date'], '%Y-%m-%d')
+                except ValueError:
+                    raise ValueError(f"考试「{ds['name']}」的日期格式不正确，应为 YYYY-MM-DD。")
+                if entry.get('name_fixes'):
+                    fixes_applied += apply_name_fixes(ds, entry.get('name_fixes'))
+                mode = str(entry.get('mode') or 'create')
+                existing_id = str(entry.get('existing_id') or '').strip()
+                if mode == 'overwrite' and existing_id:
+                    ds['id'] = existing_id
+                ds = validate_dataset(ds)
+                result = analyze(ds, default_rules, include_tables=False)
+                prepared.append((ds, result, mode == 'overwrite' and bool(existing_id)))
+
+            with db() as conn:
+                for ds, result, is_overwrite in prepared:
+                    meta = _dataset_meta(ds, timestamp)
+                    conn.execute(
+                        '''INSERT INTO exams(
+                             id, dataset, rules, created_at, updated_at,
+                             name, grade, exam_date, filename, imported_at, row_count, subject_count
+                           ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                           ON CONFLICT(id) DO UPDATE SET
+                             dataset=excluded.dataset, rules=excluded.rules, updated_at=excluded.updated_at,
+                             name=excluded.name, grade=excluded.grade, exam_date=excluded.exam_date,
+                             filename=excluded.filename, imported_at=excluded.imported_at,
+                             row_count=excluded.row_count, subject_count=excluded.subject_count''',
+                        (ds['id'], encode(ds), encode(result['rules']), timestamp, timestamp, *meta),
+                    )
+                    if is_overwrite:
+                        overwritten += 1
+                    else:
+                        imported += 1
+                    exam_ids.append(ds['id'])
+
+                teachers_updated = 0
+                if isinstance(teacher_sheets, list) and teacher_sheets:
+                    grade_rows = conn.execute(
+                        f'{_SUMMARY_SQL} WHERE archived=0 AND grade=?', (grade,)
+                    ).fetchall()
+                    by_name = {exam_summary(r)['name']: r['id'] for r in grade_rows}
+                    for ts in teacher_sheets:
+                        parsed_t = ts.get('parsed') if isinstance(ts, dict) else None
+                        if not isinstance(parsed_t, dict):
+                            continue
+                        grouped: dict[str, list[dict]] = {}
+                        for row_t in parsed_t.get('rows') or []:
+                            en = str(row_t.get('exam_name') or '').strip()
+                            if en:
+                                tid = by_name.get(en)
+                                if tid is None:
+                                    for ename, eid in by_name.items():
+                                        if en in ename or ename in en:
+                                            tid = eid
+                                            break
+                                if tid:
+                                    grouped.setdefault(tid, []).append(row_t)
+                            else:
+                                # No exam_name column: apply to all newly imported/overwritten exams in this batch
+                                for eid in exam_ids:
+                                    grouped.setdefault(eid, []).append(row_t)
+                        for eid, trows in grouped.items():
+                            teachers_updated += save_teachers_rows(conn, eid, trows)
+
+            invalidate_cache()
+            _trigger_auto_sync('batch-import')
+            return self.send(dict(
+                ok=True,
+                imported=imported,
+                overwritten=overwritten,
+                fixes_applied=fixes_applied,
+                teachers_updated=teachers_updated,
+                exam_ids=exam_ids,
+            ))
         match = re.fullmatch(r'/api/exams/([^/]+)/(rules|meta|archive|restore|delete)', path)
         if match:
             exam_id, action = match.groups()
@@ -603,6 +1177,7 @@ class Handler(BaseHTTPRequestHandler):
                 summary_obj = exam_summary(get_exam(exam_id))
                 summary_obj['synced_exams'] = synced_exams
                 summary_obj['saved_default'] = saved_default
+                _trigger_auto_sync('rules')
                 return self.send(summary_obj)
             if action == 'meta':
                 name = str(payload.get('name', '')).strip()
@@ -647,17 +1222,19 @@ class Handler(BaseHTTPRequestHandler):
             message = str(payload.get('text', '')).strip()
             if not message or len(message) > 20000:
                 raise ValueError('跟进记录应为1至20,000字。')
+            ts = now()
             note = dict(
                 id=uuid.uuid4().hex,
                 exam_id=exam_id,
                 **{'class': str(payload.get('class', ''))[:60]},
                 text=message,
-                created_at=now(),
+                created_at=ts,
+                updated_at=ts,
             )
             with db() as conn:
                 conn.execute(
-                    'INSERT INTO notes VALUES(?,?,?,?,?)',
-                    (note['id'], exam_id, note['class'], message, note['created_at']),
+                    'INSERT INTO notes(id, exam_id, class_name, text, created_at, updated_at) VALUES(?,?,?,?,?,?)',
+                    (note['id'], exam_id, note['class'], message, ts, ts),
                 )
             return self.send(note)
         note_match = re.fullmatch(r'/api/notes/([^/]+)/(update|delete)', path)
@@ -674,7 +1251,10 @@ class Handler(BaseHTTPRequestHandler):
                     if not message or len(message) > 20000:
                         raise ValueError('跟进记录应为1至20,000字。')
                     cls = str(payload.get('class', existing['class_name']))[:60]
-                    conn.execute('UPDATE notes SET class_name=?, text=? WHERE id=?', (cls, message, note_id))
+                    ts = now()
+                    conn.execute(
+                        'UPDATE notes SET class_name=?, text=?, updated_at=? WHERE id=?', (cls, message, ts, note_id)
+                    )
             if action == 'delete':
                 return self.send(dict(ok=True))
             return self.send(
@@ -684,6 +1264,7 @@ class Handler(BaseHTTPRequestHandler):
                     **{'class': cls},
                     text=message,
                     created_at=existing['created_at'],
+                    updated_at=ts,
                 )
             )
         if path == '/api/teachers':
@@ -798,6 +1379,25 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(
                 build_class_brief(grade_exams, exam_id, cls, high_ratio=high_ratio, main_ratio=main_ratio)
             )
+        if path == '/api/student-cards':
+            exam_id = str(payload.get('exam_id', '')).strip()
+            if not exam_id:
+                raise ValueError('请先选择一场已保存的考试。')
+            target_row = get_exam(exam_id)
+            target_info = exam_summary(target_row)
+            grade = str(payload.get('grade') or target_info['grade'])
+            class_name = str(payload.get('class', '')).strip()
+            student_id = str(payload.get('student_id', '')).strip()
+            with db() as conn:
+                saved = conn.execute(
+                    'SELECT * FROM exams WHERE archived=0 AND grade=? ORDER BY exam_date, created_at, id',
+                    (grade,),
+                ).fetchall()
+                grade_exams = [
+                    (exam_summary(r), exam_analysis(r, include_tables=False), get_teachers_map(conn, r['id']))
+                    for r in saved
+                ]
+            return self.send(build_student_cards(grade_exams, exam_id, class_name=class_name, student_id=student_id))
         if path == '/api/history':
             return self.send(calculate_history(payload))
         if path == '/api/export/xlsx':
@@ -807,81 +1407,52 @@ class Handler(BaseHTTPRequestHandler):
                 filename='成绩分析结果.xlsx',
             )
         if path == '/api/restore':
-            backup = payload.get('backup', {})
-            if not isinstance(backup, dict) or backup.get('format') != 'zhixu-backup' or backup.get('version') != 1:
-                raise ValueError('这不是本软件支持的备份文件。')
-            exams = backup.get('exams', [])
-            notes = backup.get('notes', [])
-            if not isinstance(exams, list) or len(exams) > 2000 or not isinstance(notes, list) or len(notes) > 50000:
-                raise ValueError('备份记录格式或数量不正确。')
-            # Validate everything before transaction: partial restores are not reported as success.
-            for item in exams:
-                validate_dataset(item['dataset'])
-                if item.get('id') != item['dataset']['id']:
-                    raise ValueError('备份的考试标识不一致。')
-                analyze(item['dataset'], item.get('rules'), include_tables=False)
-            for item in notes:
-                if not all(isinstance(item.get(k), str) for k in ('id', 'exam_id', 'text', 'created_at')) or len(item['text']) > 20000:
-                    raise ValueError('备份中的跟进记录格式不正确。')
-            count = 0
-            timestamp = now()
-            with db() as conn:
-                for item in exams:
-                    created = item.get('created_at', timestamp)
-                    meta = _dataset_meta(item['dataset'], created)
-                    cursor = conn.execute(
-                        '''INSERT OR IGNORE INTO exams(
-                             id, dataset, rules, archived, created_at, updated_at,
-                             name, grade, exam_date, filename, imported_at, row_count, subject_count
-                           ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-                        (
-                            item['id'],
-                            encode(item['dataset']),
-                            encode(item.get('rules', {})),
-                            int(bool(item.get('archived'))),
-                            created,
-                            timestamp,
-                            *meta,
-                        ),
-                    )
-                    count += cursor.rowcount
-                for item in notes:
-                    if conn.execute('SELECT 1 FROM exams WHERE id=?', (item['exam_id'],)).fetchone():
-                        conn.execute(
-                            'INSERT OR IGNORE INTO notes VALUES(?,?,?,?,?)',
-                            (
-                                item['id'],
-                                item['exam_id'],
-                                item.get('class_name', item.get('class', '')),
-                                item['text'],
-                                item['created_at'],
-                            ),
-                        )
-                for item in backup.get('teachers', []):
-                    if isinstance(item, dict) and item.get('exam_id') and conn.execute(
-                        'SELECT 1 FROM exams WHERE id=?', (item['exam_id'],)
-                    ).fetchone():
-                        subs_val = item.get('subjects', '{}')
-                        if isinstance(subs_val, dict):
-                            subs_val = encode(subs_val)
-                        conn.execute(
-                            'INSERT OR IGNORE INTO teachers VALUES(?,?,?,?,?)',
-                            (
-                                item['exam_id'],
-                                normalize_class(item.get('class_name', item.get('class', ''))),
-                                str(item.get('homeroom', ''))[:60],
-                                str(subs_val),
-                                str(item.get('updated_at', timestamp)),
-                            ),
-                        )
-                if isinstance(backup.get('default_rules'), dict) and backup['default_rules']:
-                    cleaned_def = validate_portable_rules(backup['default_rules'])
-                    conn.execute(
-                        '''INSERT OR IGNORE INTO settings(key, value, updated_at) VALUES('default_rules', ?, ?)''',
-                        (encode(cleaned_def), timestamp),
-                    )
-            invalidate_cache()
-            return self.send(dict(count=count))
+            mode = str(payload.get('mode') or 'smart_merge')
+            stats = _restore_backup_dict(payload.get('backup', {}), mode=mode)
+            return self.send(stats)
+        if path == '/api/s3/config':
+            if payload.get('clear'):
+                with db() as conn:
+                    conn.execute("DELETE FROM settings WHERE key IN ('s3_config', 's3_status')")
+                return self.send(dict(ok=True, config=s3_store.mask_config({}), status={}))
+            saved = save_s3_config(payload.get('config', payload))
+            return self.send(dict(ok=True, config=s3_store.mask_config(saved), status=get_s3_status()))
+        if path == '/api/s3/test':
+            raw_cfg = payload.get('config') if isinstance(payload.get('config'), dict) else get_s3_config()
+            existing = get_s3_config()
+            merged = dict(raw_cfg or {})
+            if not str(merged.get('secret_key') or '').strip() and existing.get('secret_key'):
+                merged['secret_key'] = existing['secret_key']
+            return self.send(s3_store.test_connection(merged))
+        if path == '/api/s3/backup':
+            cfg = get_s3_config()
+            if not s3_store.mask_config(cfg).get('configured'):
+                raise ValueError('尚未配置 S3 对象存储，请先保存连接配置。')
+            label = str(payload.get('label', '')).strip()
+            res = s3_store.put_snapshot(cfg, _build_backup_dict(), label=label)
+            save_s3_status(dict(last_sync_at=res['synced_at'], last_sync_key=res['key'], last_sync_size=res['size'], last_error=''))
+            return self.send(res)
+        if path == '/api/s3/diff':
+            cfg = get_s3_config()
+            if not s3_store.mask_config(cfg).get('configured'):
+                raise ValueError('尚未配置 S3 对象存储，请先保存连接配置。')
+            target_key, backup = s3_store.get_snapshot(cfg, payload.get('key'))
+            diff = _diff_backup_dict(backup)
+            diff['key'] = target_key
+            return self.send(diff)
+        if path == '/api/s3/restore':
+            cfg = get_s3_config()
+            if not s3_store.mask_config(cfg).get('configured'):
+                raise ValueError('尚未配置 S3 对象存储，请先保存连接配置。')
+            mode = str(payload.get('mode') or 'smart_merge')
+            target_key, backup = s3_store.get_snapshot(cfg, payload.get('key'))
+            stats = _restore_backup_dict(backup, mode=mode)
+            return self.send(dict(ok=True, key=target_key, mode=mode, **stats))
+        if path == '/api/s3/delete':
+            cfg = get_s3_config()
+            if not s3_store.mask_config(cfg).get('configured'):
+                raise ValueError('尚未配置 S3 对象存储，请先保存连接配置。')
+            return self.send(s3_store.delete_snapshot(cfg, payload.get('key', '')))
         return self.error('没有这个操作。', 404)
 
 

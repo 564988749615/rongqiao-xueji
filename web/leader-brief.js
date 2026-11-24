@@ -155,9 +155,20 @@
         });
         return `<tr${item.is_current ? ' class="tpl-current-row"' : ''}><td class="center">${item.seq}</td><td>${e(item.name)}</td><td class="center">${e(brief.meta.class)}</td><td class="center">${e(teacher)}</td>${nums.map(v => `<td class="number">${v === '' ? '' : n(v, 0)}</td>`).join('')}</tr>`;
       }).join('');
-      return `<table class="tpl-table tpl1-block"><thead><tr class="tpl-group-row"><th colspan="${4 + cols.length}">${e(sub)}</th></tr><tr><th style="width:46px">序号</th><th style="width:130px">考试名称</th><th style="width:52px">班级</th><th style="width:84px">${sub === '总分' ? '班主任' : '任课教师'}</th>${cols.map(k => `<th class="number">${k}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table>`;
+      return `<div class="tpl-subject-block"><table class="tpl-table tpl1-block"><thead><tr class="tpl-group-row"><th colspan="${4 + cols.length}">${e(sub)}</th></tr><tr><th class="center" style="width:36px">序号</th><th style="width:128px">考试名称</th><th class="center" style="width:44px">班级</th><th class="center" style="width:72px">${sub === '总分' ? '班主任' : '任课教师'}</th>${cols.map(k => `<th class="number">${k}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>`;
     }).join('');
-    return `<div class="tpl-sheet"><div class="tpl-header-bar"><span>${e(brief.meta.grade)}历次单科数据对比（${e(brief.meta.class)}班）</span><small>${mode === 'teacher' ? '教师版 · 展示前200—800名' : '领导版 · 展示前50—800名'}</small></div>${blocks}</div>`;
+    const versionText = mode === 'teacher' ? '教师版 · 前200—800名' : '领导版 · 前50—800名';
+    return `<div class="tpl-sheet tpl1-sheet">
+      <div class="tpl-header-bar">
+        <div>
+          <div class="print-brand-tag"><span></span>融侨学迹 · 历次纵向数据对比</div>
+          <span class="tpl-main-title">${e(brief.meta.grade)}历次单科数据对比（${e(brief.meta.class)}班）</span>
+        </div>
+        <div class="tpl-meta-right"><strong>${versionText}</strong><small>班主任：${e(brief.meta.homeroom || '未录入')} ｜ 当前：${e(brief.meta.exam_name)}（${e(brief.meta.exam_date)}）</small></div>
+      </div>
+      ${blocks}
+      <div class="tpl-foot"><span>统计口径：名次累计人数（同分并列全纳入） · 高亮行为本次最新考试</span><span>融侨学迹 · 教研分析存档</span></div>
+    </div>`;
   }
 
   /* ---- Template 2: 历次有效分达标/集中 + 本次单科统计 + 本班薄弱学科 ---- */
@@ -173,57 +184,114 @@
     const topRows = brief.timeline.map(item => {
       const subCells = subjects.map(sub => {
         const s = item.subjects[sub];
-        if (!s) return '<td></td><td></td><td></td>';
-        return `<td class="center">${e(s.teacher || '')}</td><td class="number">${n(s[achKey], 0)}</td><td class="number">${n(s[concKey], 0)}</td>`;
+        if (!s) return '<td class="grp-start"></td><td></td><td></td>';
+        return `<td class="center grp-start">${e(s.teacher || '')}</td><td class="number">${n(s[achKey], 0)}</td><td class="number">${n(s[concKey], 0)}</td>`;
       }).join('');
-      return `<tr${item.is_current ? ' class="tpl-current-row"' : ''}><td class="center">${item.seq}</td><td>${e(item.name)}</td><td class="center">${e(brief.meta.class)}</td><td class="center">${e(item.homeroom || '')}</td><td class="number">${n(item.participants, 0)}</td><td class="number">${n(item[countKey], 0)}</td>${subCells}</tr>`;
+      return `<tr${item.is_current ? ' class="tpl-current-row"' : ''}><td class="center">${item.seq}</td><td>${e(item.name)}</td><td class="center">${e(brief.meta.class)}</td><td class="center">${e(item.homeroom || '')}</td><td class="number">${n(item.participants, 0)}</td><td class="number"><strong>${n(item[countKey], 0)}</strong></td>${subCells}</tr>`;
     }).join('');
 
     const matrix = brief.current_subject_matrix || { subjects: [], rows: [] };
-    const matrixHTML = `<table class="tpl-table"><thead><tr class="tpl-group-row"><th colspan="${1 + matrix.subjects.length}">${e(brief.meta.exam_name)}单科统计（${e(brief.meta.class)}班）</th></tr><tr><th>统计项目</th>${matrix.subjects.map(s => `<th class="number">${e(s)}</th>`).join('')}</tr></thead><tbody>${matrix.rows.map(r => `<tr><td>${e(r[0])}</td>${r.slice(1).map((v, idx) => `<td class="number">${r[0] === '平均分' ? n(v, 1) : n(v, 0)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+    const matrixHTML = `<table class="tpl-table"><thead><tr class="tpl-group-row"><th colspan="${1 + matrix.subjects.length}">${e(brief.meta.exam_name)}单科统计（${e(brief.meta.class)}班）</th></tr><tr><th>统计项目</th>${matrix.subjects.map(s => `<th class="number">${e(s)}</th>`).join('')}</tr></thead><tbody>${matrix.rows.map(r => `<tr><td>${e(r[0])}</td>${r.slice(1).map(v => `<td class="number">${r[0] === '平均分' ? n(v, 1) : n(v, 0)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
 
     const weakRows = brief.current_weak_summary || [];
-    const weakHTML = `<table class="tpl-table"><thead><tr class="tpl-group-row"><th colspan="${2 + matrix.subjects.length}">${e(brief.meta.class)}班 ${e(brief.meta.exam_name)}薄弱学科统计</th></tr><tr><th>班级</th>${matrix.subjects.map(s => `<th class="number">${e(s)}</th>`).join('')}<th class="number">名次范围</th></tr></thead><tbody>${weakRows.map(w => `<tr><td class="center">${e(brief.meta.class)}</td>${matrix.subjects.map(s => `<td class="number">${n(w.counts[s] ?? 0, 0)}</td>`).join('')}<td class="number"><strong>前${w.cutoff}名</strong></td></tr>`).join('')}</tbody></table>`;
+    const weakHTML = `<table class="tpl-table"><thead><tr class="tpl-group-row"><th colspan="${2 + matrix.subjects.length}">${e(brief.meta.class)}班 ${e(brief.meta.exam_name)}薄弱学科统计</th></tr><tr><th class="center">班级</th>${matrix.subjects.map(s => `<th class="number">${e(s)}</th>`).join('')}<th class="number">名次范围</th></tr></thead><tbody>${weakRows.map(w => `<tr><td class="center">${e(brief.meta.class)}</td>${matrix.subjects.map(s => `<td class="number">${n(w.counts[s] ?? 0, 0)}</td>`).join('')}<td class="number"><strong>前${w.cutoff}名</strong></td></tr>`).join('')}</tbody></table>`;
 
-    return `<div class="tpl-sheet"><div class="tpl-header-bar"><span>${e(brief.meta.grade)} · ${e(brief.meta.class)}班 有效分达标集中与单科薄弱汇总</span><small>达标线口径：前${e(ratioLabel)}</small></div><div class="table-wrap"><table class="tpl-table tpl2-top"><thead><tr class="tpl-group-row"><th colspan="${6 + subjects.length * 3}">历次测试有效分达标数、集中数（达标率前${e(ratioLabel)}）</th></tr><tr><th rowspan="2">序号</th><th rowspan="2">考试名称</th><th rowspan="2">班级</th><th rowspan="2">班主任</th><th rowspan="2" class="number">参考<br>人数</th><th rowspan="2" class="number">优生<br>人数</th>${subjects.map(s => `<th colspan="3" class="center">${e(s)}</th>`).join('')}</tr><tr>${subjects.map(() => '<th class="center">教师</th><th class="number">达标</th><th class="number">集中</th>').join('')}</tr></thead><tbody>${topRows}</tbody></table></div><div class="tpl2-bottom"><div>${matrixHTML}</div><div>${weakHTML}</div></div></div>`;
+    return `<div class="tpl-sheet tpl2-sheet">
+      <div class="tpl-header-bar">
+        <div>
+          <div class="print-brand-tag"><span></span>融侨学迹 · 有效分与薄弱学科分析</div>
+          <span class="tpl-main-title">${e(brief.meta.grade)} · ${e(brief.meta.class)}班 有效分达标集中与单科薄弱汇总</span>
+        </div>
+        <div class="tpl-meta-right"><strong>达标线口径：前${e(ratioLabel)}</strong><small>班主任：${e(brief.meta.homeroom || '未录入')} ｜ 当前：${e(brief.meta.exam_name)}（${e(brief.meta.exam_date)}）</small></div>
+      </div>
+      <div class="table-wrap"><table class="tpl-table tpl2-top"><thead><tr class="tpl-group-row"><th colspan="${6 + subjects.length * 3}">历次测试有效分达标数、集中数（达标率前${e(ratioLabel)}）</th></tr><tr><th rowspan="2" class="center">序号</th><th rowspan="2">考试名称</th><th rowspan="2" class="center">班级</th><th rowspan="2" class="center">班主任</th><th rowspan="2" class="number">参考<br>人数</th><th rowspan="2" class="number">优生<br>人数</th>${subjects.map(s => `<th colspan="3" class="center grp-start">${e(s)}</th>`).join('')}</tr><tr>${subjects.map(() => '<th class="center grp-start">教师</th><th class="number">达标</th><th class="number">集中</th>').join('')}</tr></thead><tbody>${topRows}</tbody></table></div>
+      <div class="tpl2-bottom"><div>${matrixHTML}</div><div>${weakHTML}</div></div>
+      <div class="tpl-foot"><span>集中数 = 总分与该科同时达到前${e(ratioLabel)}有效线的人数；薄弱学科按第${n(brief.meta.weak_rank_index || 1, 0)}薄弱统计</span><span>融侨学迹 · 教研分析存档</span></div>
+    </div>`;
   }
 
-  /* ---- Print Card: 领导一页纸班情谈话卡 ---- */
+  /* ---- Print Card: 领导一页纸班情谈话卡（A4 横向一页排版） ---- */
   function leaderCardPrintHTML(brief) {
     const h = brief.headline, m = brief.meta;
     const hL = h.high.label, mL = h.main.label;
+    const toneClass = t => (t === 'good' ? 'p-tag-good' : t === 'alert' ? 'p-tag-alert' : t === 'warn' ? 'p-tag-warn' : 'p-tag-flat');
+    const signSpan = (v, d = 0) => {
+      if (v === null || v === undefined) return '—';
+      const cls = v > 0 ? 'p-pos' : v < 0 ? 'p-neg' : 'p-muted';
+      return `<span class="${cls}">${signed(v, d)}</span>`;
+    };
     const subRows = brief.subject_diagnosis.map(s => {
-      const otherText = (s.same_teacher_other_classes || []).map(o => `${o.class}班:${pctText(o.main_rate)}`).join(' ');
-      return `<tr><td>${e(s.subject)}</td><td>${e(s.teacher || '—')}${s.teacher_changed ? ' *换' : ''}</td><td class="number">${n(s.mean)} (${signed(s.mean_diff, 1)})</td><td class="number">${n(s.high.achievers, 0)} / ${n(s.high.concentrated, 0)} (${signed(s.high.gap, 0)})</td><td class="number">${n(s.main.achievers, 0)} / ${n(s.main.concentrated, 0)} (${signed(s.main.gap, 0)})</td><td>${e(s.mismatch_label)}</td><td>${e(otherText || '—')}</td></tr>`;
+      const otherText = (s.same_teacher_other_classes || []).map(o => `${o.class}班 ${pctText(o.main_rate)}`).join(' · ');
+      return `<tr>
+        <td><strong>${e(s.subject)}</strong></td>
+        <td class="center">${e(s.teacher || '—')}${s.teacher_changed ? '<span class="p-tag p-tag-warn">换师</span>' : ''}</td>
+        <td class="number">${n(s.mean)} <small>(${signSpan(s.mean_diff, 1)})</small></td>
+        <td class="number">${n(s.high.achievers, 0)} / ${n(s.high.concentrated, 0)} <small>(${signSpan(s.high.gap, 0)})</small></td>
+        <td class="number">${n(s.main.achievers, 0)} / ${n(s.main.concentrated, 0)} <small>(${signSpan(s.main.gap, 0)})</small></td>
+        <td class="center"><span class="p-tag ${toneClass(s.mismatch_tone)}">${e(s.mismatch_label)}</span></td>
+        <td>${e(otherText || '—')}</td>
+      </tr>`;
     }).join('');
     const flow = brief.flow;
     const flowLine = flow.available
-      ? `较上次（${e(flow.prev_exam_name)}，匹配${flow.matched_count}人）：${hL}保尖 ${flow.high_keep}/${flow.high_prev}（${pctText(flow.high_keep_rate)}）、掉出 ${flow.high_drop_count}人、冲尖 ${flow.high_rise_count}人 ｜ ${mL}守线 ${flow.main_keep}/${flow.main_prev}（${pctText(flow.main_keep_rate)}）、跌出 ${flow.main_drop_count}人、临界突围 ${flow.main_rise_count}人`
-      : flow.reason;
+      ? `较上次（${e(flow.prev_exam_name)}，跨次匹配 ${flow.matched_count} 人）：<b>${hL}保尖率 ${pctText(flow.high_keep_rate)}</b>（稳住 ${flow.high_keep}/${flow.high_prev} · 掉出 ${flow.high_drop_count} · 冲尖 +${flow.high_rise_count}）｜ <b>${mL}守线率 ${pctText(flow.main_keep_rate)}</b>（稳住 ${flow.main_keep}/${flow.main_prev} · 跌出 ${flow.main_drop_count} · 突围 +${flow.main_rise_count}）`
+      : e(flow.reason);
     const bHigh = (brief.action_lists.borderline_high || []).slice(0, 6).map(s => `${s.name}(差${n(s.score_gap)}分:${s.missing_subjects.slice(0, 2).map(x => x.subject).join('/')})`).join('；') || '无';
-    const bMain = (brief.action_lists.borderline_main || []).slice(0, 8).map(s => `${s.name}(差${n(s.score_gap)}分:${s.missing_subjects.slice(0, 2).map(x => x.subject).join('/')})`).join('；') || '无';
-    const drops = (brief.action_lists.drop_alerts || []).slice(0, 6).map(s => `${s.name}(${s.prev_tier}→${s.curr_tier}，${(s.biggest_drop_subjects || []).map(d => `${d.subject}退${d.drop}`).join('/')})`).join('；') || '无';
-    const pWeak = (brief.action_lists.persistent_weak || []).slice(0, 6).map(s => `${s.name}(${s.subject} ${s.hits}/${s.exams_checked}次)`).join('；') || '无';
+    const bMain = (brief.action_lists.borderline_main || []).slice(0, 7).map(s => `${s.name}(差${n(s.score_gap)}分:${s.missing_subjects.slice(0, 2).map(x => x.subject).join('/')})`).join('；') || '无';
+    const drops = (brief.action_lists.drop_alerts || []).slice(0, 5).map(s => `${s.name}(${s.prev_tier}→${s.curr_tier}${s.biggest_drop_subjects?.length ? ',' + s.biggest_drop_subjects.map(d => `${d.subject}退${d.drop}`).join('/') : ''})`).join('；') || '无';
+    const pWeak = (brief.action_lists.persistent_weak || []).slice(0, 5).map(s => `${s.name}(${s.subject} ${s.hits}/${s.exams_checked}次)`).join('；') || '无';
+    const mentorItems = brief.action_lists.mentor_list || [];
+    const mentorLine = m.mentor_range
+      ? `<div><b>导师制（${m.mentor_range[0]}-${m.mentor_range[1]}名，${mentorItems.length}人）：</b>${e(mentorItems.slice(0, 8).map(s => `${s.name}(#${s.rank}${s.weak?.[0] ? '·' + s.weak[0] : ''})`).join('、') || '无')}</div>`
+      : '';
 
     return `<div class="tpl-sheet card-sheet">
       <div class="card-head">
-        <div><h1>${e(m.grade)} · ${e(m.class)}班 班情双线谈话卡</h1><p>${e(m.exam_name)}（${e(m.exam_date)}）｜ 班主任：${e(m.homeroom || '未录入')} ｜ 参考 ${n(h.participants, 0)}/${n(h.registered, 0)} 人 ｜ 均分 ${n(h.mean)}（离均差 ${signed(h.mean_diff, 1)}）｜ 标准差 ${n(h.std)} ｜ 后20% ${n(h.bottom20_count, 0)}人</p></div>
+        <div class="card-title-block">
+          <div class="print-brand-tag"><span></span>融侨学迹 · 班情分析会议专用</div>
+          <h1>${e(m.grade)} · ${e(m.class)}班 班情双线谈话卡</h1>
+          <p class="card-meta-line"><span>${e(m.exam_name)}（${e(m.exam_date)}）</span><span>班主任：<strong>${e(m.homeroom || '未录入')}</strong></span><span>实考 ${n(h.participants, 0)}/${n(h.registered, 0)} 人</span><span>标准差 ${n(h.std)}</span><span>后20% ${n(h.bottom20_count, 0)} 人</span></p>
+        </div>
         <div class="card-kpis">
-          <div><small>${e(hL)}尖优</small><b>${n(h.high.count, 0)}人</b><span>${pctText(h.high.rate)} · 较上次${signed(h.high.delta_prev_count, 0)} · 较首考${signed(h.high.delta_entry_count, 0)}</span></div>
-          <div><small>${e(mL)}基本盘</small><b>${n(h.main.count, 0)}人</b><span>${pctText(h.main.rate)} · 较上次${signed(h.main.delta_prev_count, 0)} · 较首考${signed(h.main.delta_entry_count, 0)}</span></div>
-          <div><small>尖优比 (${e(hL)}÷${e(mL)})</small><b>${pctText(h.elite_ratio)}</b><span>${e(hL)}线 ${n(h.high.cutoff)} / ${e(mL)}线 ${n(h.main.cutoff)}</span></div>
+          <div class="kpi-green"><small>${e(hL)}尖优（线 ${n(h.high.cutoff)}）</small><b>${n(h.high.count, 0)}人 <em>${pctText(h.high.rate)}</em></b><span>较上次 ${signed(h.high.delta_prev_count, 0)} · 较首考 ${signed(h.high.delta_entry_count, 0)}</span></div>
+          <div class="kpi-purple"><small>${e(mL)}基本盘（线 ${n(h.main.cutoff)}）</small><b>${n(h.main.count, 0)}人 <em>${pctText(h.main.rate)}</em></b><span>较上次 ${signed(h.main.delta_prev_count, 0)} · 较首考 ${signed(h.main.delta_entry_count, 0)}</span></div>
+          <div><small>尖优含金量 (${e(hL)}÷${e(mL)})</small><b>${pctText(h.elite_ratio)}</b><span>20%–40%蓄水池 ${Math.max(0, (h.main.count || 0) - (h.high.count || 0))} 人</span></div>
+          <div><small>总分均分</small><b>${n(h.mean)} <em>${signed(h.mean_diff, 1)}</em></b><span>年级均分 ${n(h.grade_mean)}</span></div>
         </div>
       </div>
-      <div class="card-points"><strong>谈话要点：</strong><ol>${h.talking_points.map(p => `<li>${e(p)}</li>`).join('')}</ol></div>
-      <table class="tpl-table"><thead><tr class="tpl-group-row"><th colspan="7">${e(hL)} / ${e(mL)} 双线学科诊断与同师对比</th></tr><tr><th>学科</th><th>任课教师</th><th class="number">均分（离均差）</th><th class="number">${e(hL)} 达标/集中(贡献差)</th><th class="number">${e(mL)} 达标/集中(贡献差)</th><th>双线诊断</th><th>同师另班(${e(mL)})</th></tr></thead><tbody>${subRows}</tbody></table>
-      <div class="card-flow"><strong>人员流动：</strong>${flowLine}</div>
-      <div class="card-lists">
-        <div><b>冲${e(hL)}临界/跛脚：</b>${e(bHigh)}</div>
-        <div><b>保冲${e(mL)}临界/跛脚：</b>${e(bMain)}</div>
-        <div><b>掉线失血预警：</b>${e(drops)}</div>
-        <div><b>连续顽固偏科：</b>${e(pWeak)}</div>
+
+      <div class="card-points">
+        <div class="card-points-title">班情会核心谈话要点</div>
+        <ol>${h.talking_points.map(p => `<li>${e(p)}</li>`).join('')}</ol>
       </div>
-      <div class="card-notes"><div>下阶段重点盯人（班主任/学科认领）：</div><div>教研与跟进举措：</div></div>
+
+      <table class="tpl-table card-sub-table">
+        <thead>
+          <tr class="tpl-group-row"><th colspan="7">${e(hL)} / ${e(mL)} 双线学科诊断与同师对比</th></tr>
+          <tr><th style="width:54px">学科</th><th class="center" style="width:76px">任课教师</th><th class="number" style="width:94px">均分 (离均差)</th><th class="number" style="width:118px">${e(hL)} 达标/集中(差)</th><th class="number" style="width:118px">${e(mL)} 达标/集中(差)</th><th class="center" style="width:108px">双线诊断</th><th>同师另班 (${e(mL)}占比)</th></tr>
+        </thead>
+        <tbody>${subRows}</tbody>
+      </table>
+
+      <div class="card-flow"><strong>跨次人员流动：</strong>${flowLine}</div>
+
+      <div class="card-bottom-grid">
+        <div class="card-lists">
+          <div class="card-box-title">分层盯人与包干名单</div>
+          <div><b>冲${e(hL)}临界：</b>${e(bHigh)}</div>
+          <div><b>保冲${e(mL)}临界：</b>${e(bMain)}</div>
+          <div><b>掉队失血预警：</b>${e(drops)}</div>
+          <div><b>连续顽固偏科：</b>${e(pWeak)}</div>
+          ${mentorLine}
+        </div>
+        <div class="card-notes">
+          <div class="card-box-title">班情会纪要与包干落实</div>
+          <div class="note-line"><span>核心定性：</span></div>
+          <div class="note-line"><span>整改抓手：</span></div>
+          <div class="note-line"><span>下阶段目标：</span></div>
+          <div class="sign-row"><span>参会领导：______________</span><span>班主任：______________</span><span>日期：____/____</span></div>
+        </div>
+      </div>
     </div>`;
   }
 
@@ -233,46 +301,90 @@
       Z.notice('打印窗口被浏览器拦截，请允许本页面打开新窗口后重试。', true);
       return null;
     }
-    win.document.write(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>${e(title)}</title><style>
+    win.document.write(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>${e(title)} · 融侨学迹</title><style>
       *{box-sizing:border-box}
-      body{margin:20px;color:#231b33;font:11.5px/1.45 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;font-variant-numeric:tabular-nums}
-      .controls{position:sticky;top:0;background:#fff;padding:10px 0 12px;border-bottom:1px solid #e5dfec;margin-bottom:14px;display:flex;align-items:center;gap:12px}
-      .controls button{font:inherit;padding:8px 18px;border:1px solid #8061b5;border-radius:6px;background:#8061b5;color:#fff;cursor:pointer;font-weight:600}
-      .controls small{color:#73647f}
-      .print-page{break-before:page;margin-bottom:24px}
-      .print-page:first-of-type{break-before:auto}
-      .tpl-header-bar{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;padding-bottom:6px;border-bottom:2px solid #684792}
-      .tpl-header-bar span{font-size:17px;font-weight:700;color:#2c2240}
-      .tpl-header-bar small{font-size:11px;color:#6e607d}
-      .tpl-table{width:100%;border-collapse:collapse;margin-bottom:10px;font-size:10.5px}
-      .tpl-table th,.tpl-table td{border:1px solid #8a8298;padding:3.5px 5px;text-align:left}
-      .tpl-table th{background:#dfe6f5;font-weight:650;color:#231b33}
-      .tpl-table tr.tpl-group-row th{background:#c8d5ef;text-align:center;font-size:11.5px;padding:4px}
-      .tpl-table td.number,.tpl-table th.number{text-align:right}
+      body{margin:0;background:#eae8f2;color:#1e1b2e;font:11px/1.44 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;font-variant-numeric:tabular-nums;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+      .controls{position:sticky;top:0;z-index:30;background:#fff;padding:10px 24px;border-bottom:1px solid #d9d4e5;display:flex;align-items:center;justify-content:space-between;gap:14px;box-shadow:0 2px 10px rgba(30,27,46,.06)}
+      .controls-left{display:flex;align-items:center;gap:12px}
+      .controls button{font:inherit;padding:7px 18px;border:1px solid #6f4eb8;border-radius:6px;background:#6f4eb8;color:#fff;cursor:pointer;font-weight:600;font-size:12.5px}
+      .controls button:hover{background:#573a9b}
+      .controls small{color:#69627e;font-size:12px}
+      .pages-wrap{padding:20px;display:grid;gap:20px;justify-items:center}
+      .print-page{width:${landscape ? '277mm' : '190mm'};max-width:100%;background:#fff;padding:${landscape ? '9mm 10mm' : '10mm 11mm'};border-radius:4px;box-shadow:0 4px 20px rgba(30,27,46,.10);break-before:page;page-break-before:always}
+      .print-page:first-of-type{break-before:auto;page-break-before:auto}
+      .print-brand-tag{display:inline-flex;align-items:center;gap:5px;font-size:9.5px;font-weight:650;color:#6f4eb8;letter-spacing:.3px;margin-bottom:2px}
+      .print-brand-tag span{display:inline-block;width:6px;height:6px;border-radius:2px;background:#6f4eb8}
+      .tpl-header-bar{display:flex;justify-content:space-between;align-items:flex-end;gap:14px;margin-bottom:9px;padding-bottom:6px;border-bottom:2px solid #573a9b}
+      .tpl-main-title{display:block;font-size:16px;font-weight:700;color:#1e1b2e;line-height:1.25}
+      .tpl-meta-right{text-align:right;font-size:10px;color:#5a536e;line-height:1.45}
+      .tpl-meta-right strong{display:block;color:#573a9b;font-size:11px}
+      .tpl-subject-block{break-inside:avoid;page-break-inside:avoid;margin-bottom:8px}
+      .tpl-table{width:100%;border-collapse:collapse;margin-bottom:7px;font-size:10px}
+      .tpl-table thead{display:table-header-group}
+      .tpl-table tr{break-inside:avoid;page-break-inside:avoid}
+      .tpl-table th,.tpl-table td{border:1px solid #bfb8cf;padding:3.5px 5px;text-align:left;vertical-align:middle}
+      .tpl-table th{background:#efebf8;font-weight:650;color:#27203d}
+      .tpl-table tr.tpl-group-row th{background:#dfd6f2;color:#3d2570;text-align:center;font-size:11px;padding:4px}
+      .tpl-table tbody tr:nth-child(even) td{background:#faf9fd}
+      .tpl-table td.number,.tpl-table th.number{text-align:right;white-space:nowrap}
       .tpl-table td.center,.tpl-table th.center{text-align:center}
-      .tpl-table tr.tpl-current-row td{background:#f7f2fc;font-weight:600}
-      .tpl2-bottom{display:grid;grid-template-columns:1.15fr 1fr;gap:14px;margin-top:10px;align-items:start}
-      .card-head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;margin-bottom:10px;padding-bottom:8px;border-bottom:2px solid #8061b5}
-      .card-head h1{margin:0 0 4px;font-size:18px;color:#302a40}
-      .card-head p{margin:0;color:#645773;font-size:11px}
-      .card-kpis{display:flex;gap:8px;flex-shrink:0}
-      .card-kpis>div{border:1px solid #d5c6e7;background:#f7f3fc;border-radius:6px;padding:5px 9px;min-width:128px}
-      .card-kpis small{display:block;font-size:10px;color:#6e5d82}
-      .card-kpis b{display:block;font-size:15px;color:#5a3789;line-height:1.25}
-      .card-kpis span{display:block;font-size:9.5px;color:#73647f}
-      .card-points{background:#faf8fd;border:1px solid #e2d8ee;border-radius:6px;padding:7px 10px;margin-bottom:9px;font-size:11px}
-      .card-points ol{margin:4px 0 0;padding-left:18px}
-      .card-points li{margin:2px 0}
-      .card-flow{padding:6px 9px;background:#f5f9f7;border:1px solid #d2e4db;border-radius:6px;margin:8px 0;font-size:10.5px}
-      .card-lists{border:1px solid #e0d7eb;border-radius:6px;padding:7px 10px;font-size:10.5px;display:grid;gap:4px;margin-bottom:8px}
-      .card-notes{border:1px dashed #a99ab9;border-radius:6px;padding:7px 10px;font-size:10.5px;color:#665873}
-      .card-notes>div{min-height:24px;border-bottom:1px dotted #d7cde3;padding:3px 0}
-      .card-notes>div:last-child{border-bottom:0}
-      @page{size:A4 ${landscape ? 'landscape' : 'portrait'};margin:9mm}
-      @media print{body{margin:0}.controls{display:none}.print-page{margin-bottom:0}}
+      .tpl-table tr.tpl-current-row td{background:#e9e2f8;font-weight:700}
+      .tpl-table tr.tpl-current-row td:first-child{border-left:3px solid #6f4eb8}
+      .tpl-table th.grp-start,.tpl-table td.grp-start{border-left:1.5px solid #8a7dad}
+      .card-meta-line{display:flex;flex-wrap:wrap;gap:2px 10px;margin:0;color:#5a536e;font-size:10px}
+      .card-meta-line span{white-space:nowrap}
+      .tpl2-top{font-size:9px}
+      .tpl2-top th,.tpl2-top td{padding:2.5px 3.5px}
+      .tpl2-bottom{display:grid;grid-template-columns:1.15fr 1fr;gap:12px;margin-top:8px;align-items:start;break-inside:avoid;page-break-inside:avoid}
+      .tpl-foot{display:flex;justify-content:space-between;align-items:center;margin-top:6px;padding-top:5px;border-top:1px solid #ded8ea;font-size:9.5px;color:#69627e}
+
+      /* 领导谈话卡专版 */
+      .card-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-end;margin-bottom:8px;padding-bottom:7px;border-bottom:2px solid #573a9b}
+      .card-title-block h1{margin:0 0 3px;font-size:17px;line-height:1.2;color:#1e1b2e}
+      .card-title-block p{margin:0;color:#5a536e;font-size:10px}
+      .card-kpis{display:grid;grid-template-columns:repeat(4,minmax(108px,1fr));gap:6px;flex-shrink:0}
+      .card-kpis>div{border:1px solid #d5cee6;background:#f8f7fc;border-radius:5px;padding:4.5px 8px}
+      .card-kpis>div.kpi-green{background:#ecf7f2;border-color:#bfe2d3}
+      .card-kpis>div.kpi-purple{background:#f1ecfa;border-color:#cfc2ea}
+      .card-kpis small{display:block;font-size:9px;color:#5a536e;font-weight:600}
+      .card-kpis b{display:block;font-size:14px;color:#1e1b2e;line-height:1.25;margin:1px 0}
+      .card-kpis b em{font-style:normal;font-size:10px;font-weight:600;color:#573a9b;margin-left:3px}
+      .card-kpis span{display:block;font-size:9px;color:#69627e}
+      .card-points{background:#f7f4fc;border:1px solid #dfd7ee;border-left:3.5px solid #6f4eb8;border-radius:5px;padding:6px 10px;margin-bottom:8px;font-size:10.5px;break-inside:avoid}
+      .card-points-title{font-weight:700;color:#573a9b;margin-bottom:2px;font-size:10.5px}
+      .card-points ol{margin:0;padding-left:16px}
+      .card-points li{margin:1.5px 0;line-height:1.45}
+      .card-sub-table{margin-bottom:7px}
+      .p-pos{color:#1f7a5a;font-weight:650}
+      .p-neg{color:#b4324e;font-weight:650}
+      .p-muted{color:#69627e}
+      .p-tag{display:inline-block;padding:1px 6px;border-radius:3px;font-size:9.5px;font-weight:600;white-space:nowrap}
+      .p-tag-good{background:#ecf7f2;color:#1f7a5a}
+      .p-tag-warn{background:#fef6e8;color:#9a5b13}
+      .p-tag-alert{background:#fdf0f3;color:#b4324e}
+      .p-tag-flat{background:#f2f1f6;color:#5a536e}
+      .card-flow{padding:5px 9px;background:#ecf7f2;border:1px solid #c5e5d8;border-radius:5px;margin-bottom:7px;font-size:10px;color:#1e1b2e;break-inside:avoid}
+      .card-bottom-grid{display:grid;grid-template-columns:1.28fr 1fr;gap:9px;align-items:stretch;break-inside:avoid;page-break-inside:avoid}
+      .card-lists,.card-notes{border:1px solid #d5cee6;border-radius:5px;padding:6px 9px;font-size:10px}
+      .card-lists{display:grid;gap:3px;align-content:start}
+      .card-box-title{font-weight:700;color:#573a9b;font-size:10.5px;padding-bottom:3px;margin-bottom:3px;border-bottom:1px solid #e4e1ee}
+      .card-notes{display:flex;flex-direction:column;background:#fcfbfe}
+      .note-line{flex:1;min-height:22px;border-bottom:1px dashed #ccc6dd;padding:3px 0;color:#5a536e;font-weight:600}
+      .sign-row{display:flex;justify-content:space-between;gap:8px;padding-top:6px;margin-top:auto;font-size:9.5px;color:#5a536e}
+
+      @page{size:A4 ${landscape ? 'landscape' : 'portrait'};margin:${landscape ? '8mm 9mm' : '10mm 11mm'}}
+      @media print{
+        body{background:#fff}
+        .controls{display:none!important}
+        .pages-wrap{padding:0;display:block}
+        .print-page{width:auto;padding:0;margin:0;border-radius:0;box-shadow:none}
+      }
     </style></head><body>
-      <div class="controls"><button onclick="window.print()">打印 / 存为 PDF</button><small>${e(title)} · 共 ${pagesHTML.length} 页（每班一页自动分页）</small></div>
-      ${pagesHTML.map(p => `<section class="print-page">${p}</section>`).join('')}
+      <div class="controls">
+        <div class="controls-left"><button onclick="window.print()">打印 / 存为 PDF</button><small>${e(title)} · 共 ${pagesHTML.length} 份（已按 A4 ${landscape ? '横向' : '纵向'}优化排版与分页）</small></div>
+        <small>融侨学迹 · 纸面打印预览</small>
+      </div>
+      <div class="pages-wrap">${pagesHTML.map(p => `<section class="print-page">${p}</section>`).join('')}</div>
     </body></html>`);
     win.document.close();
     return win;
@@ -309,7 +421,7 @@
         <td class="number">${n(s.high.achievers, 0)} / ${n(s.high.concentrated, 0)} <small class="${s.high.gap > 0 ? 'delta-positive' : s.high.gap < 0 ? 'delta-negative' : 'muted'}">(${signed(s.high.gap, 0)})</small></td>
         <td class="number">${n(s.main.achievers, 0)} / ${n(s.main.concentrated, 0)} <small class="${s.main.gap > 0 ? 'delta-positive' : s.main.gap < 0 ? 'delta-negative' : 'muted'}">(${signed(s.main.gap, 0)})</small></td>
         <td><span class="badge ${toneClass(s.mismatch_tone)}">${e(s.mismatch_label)}</span></td>
-        <td>${others || '<span class="muted">—</span>'}</td>
+        <td class="brief-other-cell">${others || '<span class="muted">—</span>'}</td>
       </tr>`;
     }).join('');
 
@@ -331,58 +443,76 @@
     const mainChoices = [...new Set([30, 35, 40, 45, 50, 60, Number((m.main_ratio * 100).toFixed(1))])].sort((a, b) => a - b);
     const roundingLabel = m.cutoff_rounding === 'round' ? '四舍五入' : m.cutoff_rounding === 'ceil' ? '向上取整' : '向下取整';
     const tieLabel = m.tie_mode === 'dense' ? '不跳号(1,1,2)' : '跳号(1,1,3)';
+    const clsIdx = m.classes.indexOf(m.class);
+    const hasPrevCls = clsIdx > 0;
+    const hasNextCls = clsIdx >= 0 && clsIdx < m.classes.length - 1;
 
     return `
       <section class="panel brief-control-panel">
-        <div class="toolbar" style="margin-bottom:12px">
-          <label>选择班级<select id="brief-class" aria-label="选择班情分析班级">${m.classes.map(c => option(c, `${c}班`, m.class)).join('')}</select></label>
-          <label>尖优线<select id="brief-high-ratio" aria-label="尖优线比例">${highChoices.map(v => option(Number((v / 100).toFixed(4)), `前 ${v}%`, Number(m.high_ratio.toFixed(4)))).join('')}</select></label>
-          <label>达标线<select id="brief-main-ratio" aria-label="达标线比例">${mainChoices.map(v => option(Number((v / 100).toFixed(4)), `前 ${v}%`, Number(m.main_ratio.toFixed(4)))).join('')}</select></label>
-          <div class="spacer"></div>
-          ${btn('自定义口径', 'rules', '', 'secondary')}
-          ${btn('任课教师管理', 'open-teachers', '', 'secondary')}
-          ${btn('批量打印全年级', 'open-batch-print', '', 'secondary')}
-          ${btn('打印 · 领导谈话卡', 'print-brief-card', '', 'primary')}
-        </div>
-        <div class="brief-print-strip">
-          <span class="small-text">单班模板直出：</span>
-          ${btn('打印模板1 · 领导版 (50–800)', 'print-tpl1-leader', '', 'secondary small')}
-          ${btn('打印模板1 · 教师版 (200–800)', 'print-tpl1-teacher', '', 'secondary small')}
-          ${btn('打印模板2 · 有效分与薄弱科', 'print-tpl2', '', 'secondary small')}
+        <div class="brief-bar">
+          <div class="class-stepper" role="group" aria-label="逐班切换">
+            <button type="button" data-action="brief-prev-class" title="上一班" aria-label="上一班"${hasPrevCls ? '' : ' disabled'}>‹</button>
+            <select id="brief-class" aria-label="选择班情分析班级">${m.classes.map(c => option(c, `${c}班`, m.class)).join('')}</select>
+            <button type="button" data-action="brief-next-class" title="下一班" aria-label="下一班"${hasNextCls ? '' : ' disabled'}>›</button>
+          </div>
+          <div class="brief-ratio-group">
+            <span>尖优</span>
+            <select id="brief-high-ratio" aria-label="尖优线比例">${highChoices.map(v => option(Number((v / 100).toFixed(4)), `前 ${v}%`, Number(m.high_ratio.toFixed(4)))).join('')}</select>
+            <span>达标</span>
+            <select id="brief-main-ratio" aria-label="达标线比例">${mainChoices.map(v => option(Number((v / 100).toFixed(4)), `前 ${v}%`, Number(m.main_ratio.toFixed(4)))).join('')}</select>
+            ${state.briefRatioOverride ? '<button type="button" class="text-button" data-action="save-brief-ratios" title="将当前试算双线写入本场口径">存为口径</button>' : ''}
+          </div>
+          <div class="brief-actions">
+            ${btn('任课教师', 'open-teachers', '', 'secondary small')}
+            <details class="print-menu">
+              <summary class="btn secondary small">更多打印模板 ▾</summary>
+              <div class="print-menu-list">
+                <button type="button" data-action="print-tpl1-leader"><strong>打印模板1 · 领导版</strong><small>A4 纵向 · 展示历次前 50–800 名</small></button>
+                <button type="button" data-action="print-tpl1-teacher"><strong>打印模板1 · 教师版</strong><small>A4 纵向 · 展示历次前 200–800 名</small></button>
+                <button type="button" data-action="print-tpl2"><strong>打印模板2 · 有效分与薄弱科</strong><small>A4 横向 · 达标集中 + 单科矩阵 + 薄弱科</small></button>
+                <div class="print-menu-divider"></div>
+                <button type="button" data-action="open-batch-print"><strong>批量打印全年级…</strong><small>一键生成全年级 ${m.classes.length} 个班自动分页稿</small></button>
+                <button type="button" data-action="open-student-cards" data-class="${e(m.class)}"><strong>学生个人诊断卡（发家长/学生）…</strong><small>零他人隐私 · 雷达图 + 百分位 + 提分抓手</small></button>
+                <button type="button" data-action="download-class-zip"><strong>一键按班拆包导出 ZIP（发班主任）</strong><small>每班独立文件夹 · 本班明细 Excel + 打印版</small></button>
+              </div>
+            </details>
+            ${btn('打印 · 领导谈话卡', 'print-brief-card', '', 'primary small')}
+          </div>
         </div>
         <div class="brief-rules-pill">
-          <span>当前口径：${roundingLabel} · 并列${tieLabel} · 临界 ±${n(m.borderline_band, 0)} 名 · 显著进退 ≥${n(m.shift_threshold, 0)} 名 · 预警阈值 ${n(m.warn_gap_pct ?? 5, 1)}%${m.mentor_range ? ` · 导师制 ${m.mentor_range[0]}-${m.mentor_range[1]} 名` : ''}</span>
+          <span>当前口径：${roundingLabel} · 并列${tieLabel} · 临界 ±${n(m.borderline_band, 0)} 名 · 显著进退 ≥${n(m.shift_threshold, 0)} 名 · 预警 ${n(m.warn_gap_pct ?? 5, 1)}%${m.mentor_range ? ` · 导师制 ${m.mentor_range[0]}-${m.mentor_range[1]} 名` : ''}</span>
+          ${state.briefRatioOverride ? '<span class="badge warning">当前为临时双线试算</span>' : ''}
         </div>
       </section>
 
       <section class="panel brief-hero">
-        <div class="section-title">
+        <div class="section-title brief-hero-head">
           <div>
-            <h2>${e(m.grade)} · ${e(m.class)}班 班情诊断 <span class="badge" style="margin-left:8px">班主任：${e(m.homeroom || '未录入')}</span></h2>
+            <h2 class="brief-hero-title"><span>${e(m.grade)} · ${e(m.class)}班 班情诊断</span><span class="badge">班主任：${e(m.homeroom || '未录入')}</span></h2>
             <p>${e(m.exam_name)}（${e(m.exam_date)}） · 实考 ${n(h.participants, 0)} / ${n(h.registered, 0)} 人 · 已追踪 ${m.exam_count} 场历次考试</p>
           </div>
           <div class="brief-tags">${h.tags.map(t => `<span class="badge ${toneClass(t.tone)}">${e(t.text)}</span>`).join('')}</div>
         </div>
         <div class="brief-kpi-grid">
           <div class="brief-kpi accent-green">
-            <span>${e(h.high.label)}尖优（线 ${n(h.high.cutoff)}分）</span>
+            <span>${e(h.high.label)}尖优 · 线 ${n(h.high.cutoff)}分</span>
             <strong>${n(h.high.count, 0)}<em>人 · ${pctText(h.high.rate)}</em></strong>
-            <small>较上次 ${signed(h.high.delta_prev_count, 0, '人')} ｜ 较首考 ${signed(h.high.delta_entry_count, 0, '人')}</small>
+            <small class="kpi-meta"><span class="kpi-chip">较上次 ${signed(h.high.delta_prev_count, 0, '人')}</span><span class="kpi-chip">较首考 ${signed(h.high.delta_entry_count, 0, '人')}</span></small>
           </div>
           <div class="brief-kpi accent-purple">
-            <span>${e(h.main.label)}基本盘（线 ${n(h.main.cutoff)}分）</span>
+            <span>${e(h.main.label)}基本盘 · 线 ${n(h.main.cutoff)}分</span>
             <strong>${n(h.main.count, 0)}<em>人 · ${pctText(h.main.rate)}</em></strong>
-            <small>较上次 ${signed(h.main.delta_prev_count, 0, '人')} ｜ 较首考 ${signed(h.main.delta_entry_count, 0, '人')}</small>
+            <small class="kpi-meta"><span class="kpi-chip">较上次 ${signed(h.main.delta_prev_count, 0, '人')}</span><span class="kpi-chip">较首考 ${signed(h.main.delta_entry_count, 0, '人')}</span></small>
           </div>
           <div class="brief-kpi">
             <span>尖优含金量（${e(h.high.label)}÷${e(h.main.label)}）</span>
             <strong>${pctText(h.elite_ratio)}</strong>
-            <small>20%–40%蓄水池：${Math.max(0, (h.main.count || 0) - (h.high.count || 0))} 人</small>
+            <small class="kpi-meta"><span class="kpi-chip">${hPct}%–${mPct}%蓄水池：${Math.max(0, (h.main.count || 0) - (h.high.count || 0))} 人</span></small>
           </div>
           <div class="brief-kpi">
             <span>总分均分（离均差）</span>
             <strong>${n(h.mean)}<em>${signed(h.mean_diff, 1)}</em></strong>
-            <small>年级均分 ${n(h.grade_mean)} · 标准差 ${n(h.std)} · 后20% ${n(h.bottom20_count, 0)}人</small>
+            <small class="kpi-meta"><span class="kpi-chip">年级均分 ${n(h.grade_mean)}</span><span class="kpi-chip">标准差 ${n(h.std)}</span><span class="kpi-chip">后20% ${n(h.bottom20_count, 0)}人</span></small>
           </div>
         </div>
         <div class="brief-talking-box">

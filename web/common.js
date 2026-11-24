@@ -40,9 +40,98 @@
   function printTables(tables,title,subtitle='') {
     const win=window.open('','_blank');
     if(!win) {notice('打印窗口被浏览器拦截，请允许此页面打开新窗口后重试。',true); return null;}
-    win.document.write(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>${escape(title)}</title><style>
-      *{box-sizing:border-box}body{margin:30px;color:#241c36;font:12px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}h1{font-size:23px}h2{font-size:17px;margin-top:26px}p{color:#5d536c}table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}th,td{border:1px solid #ddd6e8;padding:5px 7px;white-space:normal;overflow-wrap:anywhere;text-align:left}th{background:#eee7f8;font-weight:600}thead{display:table-header-group}tr{break-inside:avoid}section{break-before:page}section:first-of-type{break-before:auto}.controls{position:sticky;top:0;background:white;padding:12px 0}button{font:inherit;padding:9px 20px;border:1px solid #8061b5;border-radius:6px;background:#8061b5;color:white;cursor:pointer}small{color:#70667c}.table-wrap{overflow:visible}@page{size:A4 landscape;margin:12mm}@media print{body{margin:0;font-size:9px}.controls{display:none}h1{font-size:18px}h2{font-size:14px}th,td{padding:3px 4px}a{color:inherit;text-decoration:none}}
-      </style></head><body><div class="controls"><button onclick="window.print()">打印 / 存为 PDF</button> <small>打印范围为当前所选报表，共 ${tables.length} 张；可在打印窗口选择页码。</small></div><h1>${escape(title)}</h1><p>${escape(subtitle)}</p>${tables.map(t=>`<section><h2>${escape(t.title)}</h2>${t.note?`<p>${escape(t.note)}</p>`:''}${tableHTML(t)}<p>记录数：${t.rows.length}</p></section>`).join('')}</body></html>`);
+    const list=Array.isArray(tables)?tables:[tables];
+    const maxCols=Math.max(0,...list.map(t=>(t.columns||[]).length));
+    const landscape=maxCols>7;
+    const nowText=new Date().toLocaleDateString('zh-CN');
+    const numericCol=(t,ci)=>{
+      const name=String(t.columns[ci]||'');
+      if(/分|名|人|数|率|差|均|高|低|总|前|比例|次数|权重|占比|位置/u.test(name))return true;
+      const sample=t.rows.slice(0,8).map(r=>r[ci]).filter(v=>v!==null&&v!==undefined&&v!=='');
+      return sample.length>0&&sample.every(v=>typeof v==='number'||/^[+-]?\d+(\.\d+)?%?$/.test(String(v).trim()));
+    };
+    const renderPrintTable=t=>{
+      const numFlags=t.columns.map((_,i)=>numericCol(t,i));
+      const groupStart=ci=>ci>=3&&/达标$/u.test(String(t.columns[ci]||''))&&/集中$/u.test(String(t.columns[ci+1]||''));
+      const colCls=(i)=>[numFlags[i]?'num':'',groupStart(i)?'grp-start':''].filter(Boolean).join(' ');
+      const head=`<thead><tr>${t.columns.map((c,i)=>`<th scope="col" class="${colCls(i)}">${escape(c)}</th>`).join('')}</tr></thead>`;
+      const body=t.rows.length
+        ? t.rows.map(row=>{
+            const isSum=/^(合计|汇总|总计|全年级)$/u.test(String(row[0]??'').trim());
+            return `<tr${isSum?' class="summary-row"':''}>${row.map((v,i)=>`<td class="${colCls(i)}">${escape(cellText(v)===''?'—':cellText(v))}</td>`).join('')}</tr>`;
+          }).join('')
+        : `<tr><td colspan="${t.columns.length}" class="empty-cell">当前条件下没有记录。</td></tr>`;
+      return `<table>${head}<tbody>${body}</tbody></table>`;
+    };
+    const cleanNote=t=>{
+      let raw=String(t.note||'').trim();
+      if(!raw)return '';
+      if(subtitle){
+        const idx=raw.indexOf('。');
+        const headPart=idx>0?raw.slice(0,idx):'';
+        if(headPart&&headPart.includes('总分科目：')&&subtitle.includes('总分科目：')){
+          raw=raw.slice(idx+1).trim();
+        }
+      }
+      return raw;
+    };
+    win.document.write(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>${escape(title)} · 融侨学迹</title><style>
+      *{box-sizing:border-box}
+      body{margin:0;background:#eae8f2;color:#1e1b2e;font:11.5px/1.48 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;font-variant-numeric:tabular-nums;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+      .controls{position:sticky;top:0;z-index:20;background:#ffffff;border-bottom:1px solid #d9d4e5;padding:10px 24px;display:flex;align-items:center;justify-content:space-between;gap:14px;box-shadow:0 2px 10px rgba(30,27,46,.06)}
+      .controls-left{display:flex;align-items:center;gap:12px}
+      .controls button{font:inherit;padding:7px 18px;border:1px solid #6f4eb8;border-radius:6px;background:#6f4eb8;color:#fff;cursor:pointer;font-weight:600}
+      .controls button:hover{background:#573a9b}
+      .controls small{color:#69627e;font-size:12px}
+      .sheet-stack{padding:20px;display:grid;gap:20px;justify-items:center}
+      .sheet{width:${landscape?'277mm':'190mm'};max-width:100%;background:#ffffff;padding:12mm 13mm;border-radius:4px;box-shadow:0 4px 20px rgba(30,27,46,.10);break-before:page;page-break-before:always}
+      .sheet:first-of-type{break-before:auto;page-break-before:auto}
+      .masthead{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;padding-bottom:8px;border-bottom:2px solid #573a9b;margin-bottom:10px}
+      .brand-tag{display:inline-flex;align-items:center;gap:6px;font-size:10px;font-weight:650;color:#6f4eb8;letter-spacing:.4px;margin-bottom:3px}
+      .brand-dot{display:inline-block;width:7px;height:7px;border-radius:2px;background:#6f4eb8}
+      .masthead h1{margin:0;font-size:17px;line-height:1.25;color:#1e1b2e;font-weight:700}
+      .masthead-sub{margin:3px 0 0;font-size:10.5px;color:#5a536e}
+      .masthead-meta{text-align:right;font-size:10px;color:#69627e;white-space:nowrap}
+      .section-note{margin:0 0 8px;padding:6px 9px;background:#f7f5fc;border-left:3px solid #6f4eb8;border-radius:3px;font-size:10.5px;color:#4c4660;line-height:1.5}
+      table{border-collapse:collapse;width:100%;font-size:${maxCols>12?'9.5px':maxCols>8?'10.5px':'11px'};table-layout:auto}
+      thead{display:table-header-group}
+      tr{break-inside:avoid;page-break-inside:avoid}
+      th,td{border:1px solid #cbc4da;padding:${maxCols>12?'3.5px 4px':'4.5px 6px'};white-space:normal;overflow-wrap:anywhere;text-align:left;vertical-align:middle}
+      th{background:#eeeaf8;color:#2e2545;font-weight:650;border-bottom:1.5px solid #9c8ec0}
+      th.grp-start,td.grp-start{border-left:1.5px solid #8a7dad}
+      tbody tr:nth-child(even) td{background:#faf9fd}
+      tbody tr.summary-row td{background:#ece6f8!important;font-weight:700;border-top:1.5px solid #6f4eb8;color:#1e1b2e}
+      th.num,td.num{text-align:right;white-space:nowrap}
+      .empty-cell{text-align:center;color:#69627e;padding:16px}
+      .sheet-foot{display:flex;justify-content:space-between;align-items:center;margin-top:8px;padding-top:6px;border-top:1px solid #e4e1ee;font-size:10px;color:#69627e}
+      @page{size:A4 ${landscape?'landscape':'portrait'};margin:10mm 11mm}
+      @media print{
+        body{background:#fff}
+        .controls{display:none!important}
+        .sheet-stack{padding:0;display:block}
+        .sheet{width:auto;padding:0;margin:0;border-radius:0;box-shadow:none}
+      }
+    </style></head><body>
+      <div class="controls">
+        <div class="controls-left"><button onclick="window.print()">打印 / 存为 PDF</button><small>${escape(title)} · 共 ${list.length} 张报表（建议 A4 ${landscape?'横向':'纵向'}，已自动设置分页与重复表头）</small></div>
+        <small>融侨学迹 · 纸面打印预览</small>
+      </div>
+      <div class="sheet-stack">
+        ${list.map((t,idx)=>{const noteText=cleanNote(t);return `<section class="sheet">
+          <header class="masthead">
+            <div>
+              <div class="brand-tag"><span class="brand-dot"></span>融侨学迹 · 教研学业报表</div>
+              <h1>${escape(t.title || title)}</h1>
+              ${subtitle?`<p class="masthead-sub">${escape(subtitle)}</p>`:''}
+            </div>
+            <div class="masthead-meta">第 ${idx+1} / ${list.length} 表<br>制表日期：${nowText}</div>
+          </header>
+          ${noteText?`<p class="section-note">口径说明：${escape(noteText)}</p>`:''}
+          ${renderPrintTable(t)}
+          <footer class="sheet-foot"><span>共 ${t.rows.length} 条记录 · 同批计算口径</span><span>融侨学迹 · 教研分析存档用</span></footer>
+        </section>`;}).join('')}
+      </div>
+    </body></html>`);
     win.document.close(); return win;
   }
   async function downloadWorkbook(analysis) {
