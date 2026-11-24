@@ -312,6 +312,94 @@ class PMUpgradesTest(unittest.TestCase):
         self.assertIn('云端更新后的教研结论', texts)
         self.assertIn('云端新增记录', texts)
 
+    def test_student_comparison_and_compare_exam_switch(self):
+        raw_multi = _make_multi_xlsx()
+        inspected = self._post('/api/workbook/inspect', {
+            'filename': '总表.xlsx',
+            'content': base64.b64encode(raw_multi).decode('ascii'),
+            'grade': '初三',
+            'default_date': '2026-10-20',
+        })
+        s1, s2 = inspected['score_sheets']
+        # Also create a 3rd exam where 张锋 drops significantly so we test baseline switch (exam3 vs exam2 vs exam1)
+        wb3 = openpyxl.Workbook()
+        ws3 = wb3.active
+        ws3.title = '初三三诊_2026-11-20'
+        ws3.append(['班级', '姓名', '语文', '数学', '英语'])
+        ws3.append(['01', '张锋', 85, 82, 88])
+        ws3.append(['01', '王磊', 112, 118, 115])
+        ws3.append(['02', '李明', 105, 110, 108])
+        ws3.append(['02', '王磊', 95, 98, 96])
+        ws3.append(['02', '赵敏', 130, 138, 134])
+        ws3.append(['02', '周涛', 90, 92, 91])
+        buf3 = io.BytesIO()
+        wb3.save(buf3)
+        ds3 = self._post('/api/import', {
+            'filename': '三诊.xlsx',
+            'content': base64.b64encode(buf3.getvalue()).decode('ascii'),
+            'metadata': {'name': '初三三诊_2026-11-20', 'grade': '初三', 'date': '2026-11-20'},
+        })
+
+        batch = self._post('/api/exams/batch-import', {
+            'grade': '初三',
+            'exams': [
+                {'dataset': s1['dataset'], 'name': s1['exam_name'], 'date': s1['exam_date'], 'mode': 'create'},
+                {'dataset': s2['dataset'], 'name': s2['exam_name'], 'date': s2['exam_date'], 'mode': 'create', 'name_fixes': s2['hygiene']['typo_candidates']},
+            ],
+        })
+        exam1_id, exam2_id = batch['exam_ids']
+        exam3 = self._post('/api/exams', {'dataset': ds3})
+        exam3_id = exam3['id']
+
+        # Default compare for exam3 -> compares against exam2
+        brief_default = self._post('/api/class-brief', {'exam_id': exam3_id, 'class': '01'})
+        comp = brief_default['student_comparison']
+        self.assertEqual(comp['compare_exam']['id'], exam2_id)
+        self.assertEqual(len(comp['compare_options']), 2)
+        zf = next(r for r in comp['rows'] if r['name'] == '张锋')
+        self.assertEqual(zf['prev_total'], 362)
+        self.assertEqual(zf['prev_rank'], 2)
+        self.assertEqual(zf['total'], 255)
+        self.assertEqual(zf['rank'], 6)
+        self.assertEqual(zf['rank_gain'], -4)  # dropped from #2 to #6
+        self.assertTrue(len(zf['weak']) >= 1)
+        self.assertIsNotNone(zf['weak'][0]['score'])
+        self.assertIsNotNone(zf['weak'][0]['rank'])
+
+        # Switch compare_exam_id to exam1 -> compares against exam1!
+        brief_vs_1 = self._post('/api/class-brief', {'exam_id': exam3_id, 'class': '01', 'compare_exam_id': exam1_id})
+        comp1 = brief_vs_1['student_comparison']
+        self.assertEqual(comp1['compare_exam']['id'], exam1_id)
+        zf1 = next(r for r in comp1['rows'] if r['name'] == '张锋')
+        self.assertEqual(zf1['prev_total'], 345)
+        self.assertEqual(zf1['prev_rank'], 2)
+
+        # all_classes batch brief respects compare_exam_id
+        batch_briefs = self._post('/api/class-brief', {'exam_id': exam3_id, 'all_classes': True, 'compare_exam_id': exam1_id})
+        self.assertEqual(len(batch_briefs['briefs']), 2)
+        self.assertTrue(all(b['student_comparison']['compare_exam']['id'] == exam1_id for b in batch_briefs['briefs']))
+
+        # Verify level_profile (A1/A2/B1/B2/C1/C2 teacher levers) has ZERO scores and ZERO ranks!
+        lp = brief_default['level_profile']
+        self.assertEqual(lp['tiers'], ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'])
+        self.assertEqual(len(lp['total_distribution']), 6)
+        self.assertTrue(lp['transitions']['available'])
+        self.assertEqual(len(lp['subject_synergy']), 3)
+        self.assertEqual(len(lp['subject_synergy'][0]['teaching_groups']), 4)
+        self.assertGreaterEqual(len(lp['student_levers']), 2)
+
+        # Recursive privacy check: zero score/rank keys anywhere inside level_profile
+        forbidden_keys = {'score', 'scores', 'total', 'rank', 'ranks', 'class_rank', 'mean', 'cutoff', 'prev_total', 'prev_rank', 'rank_gain'}
+        def _walk_keys(obj):
+            if isinstance(obj, dict):
+                for k, v in obj.items():
+                    self.assertNotIn(k, forbidden_keys, f'Forbidden key {k} leaked into level_profile!')
+                    _walk_keys(v)
+            elif isinstance(obj, list):
+                for it in obj:
+                    _walk_keys(it)
+        _walk_keys(lp)
+
 
 if __name__ == '__main__':
     unittest.main()

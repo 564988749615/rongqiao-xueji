@@ -91,6 +91,7 @@ def build_class_brief(
     *,
     high_ratio: float | None = None,
     main_ratio: float | None = None,
+    compare_exam_id: str | None = None,
 ) -> dict:
     """Build a complete dual-line class brief from real saved exam analyses.
 
@@ -646,6 +647,477 @@ def build_class_brief(
         "talking_points": talking_points,
     }
 
+    # Build per-student comparison vs selected baseline exam (defaults to immediate previous exam)
+    default_prev_id = prev_tl["exam_id"] if prev_tl is not None else None
+    compare_options = [
+        {
+            "id": info["id"],
+            "name": info["name"],
+            "date": info["date"],
+            "is_prev": info["id"] == default_prev_id,
+        }
+        for info, _, _ in reversed(grade_exams)
+        if info["id"] != curr_info["id"]
+    ]
+    chosen_compare_tuple = None
+    if compare_exam_id:
+        chosen_compare_tuple = next(
+            (item for item in grade_exams if item[0]["id"] == compare_exam_id and item[0]["id"] != curr_info["id"]),
+            None,
+        )
+    if chosen_compare_tuple is None and default_prev_id:
+        chosen_compare_tuple = next(
+            (item for item in grade_exams if item[0]["id"] == default_prev_id),
+            None,
+        )
+
+    compare_info = None
+    compare_by_id = {}
+    compare_common_subs: list[str] = []
+    if chosen_compare_tuple is not None:
+        c_info, c_analysis, _ = chosen_compare_tuple
+        compare_info = {"id": c_info["id"], "name": c_info["name"], "date": c_info["date"]}
+        compare_by_id = {
+            s["id"]: s
+            for s in c_analysis["students"]
+            if s.get("eligible") and s.get("identity_reliable")
+        }
+        compare_common_subs = [sub for sub in curr_analysis["subjects"] if sub in c_analysis["subjects"]]
+
+    persistent_by_student: dict[str, set[str]] = {}
+    for pw in persistent_weak:
+        persistent_by_student.setdefault(pw["id"], set()).add(pw["subject"])
+
+    bh_ids = {x["id"] for x in borderline_high}
+    bm_ids = {x["id"] for x in borderline_main}
+    mentor_ids = {x["id"] for x in mentor_list}
+    drop_ids = {x["id"] for x in drop_alerts}
+    weak_display_limit = min(max(1, int(curr_rules.get("weak_count", 3))), 3)
+
+    student_comp_rows = []
+    rank_gains_list: list[int] = []
+    big_gain_count = 0
+    big_drop_count = 0
+    sorted_cls_students = sorted(
+        curr_cls_active,
+        key=lambda s: (
+            s.get("class_rank") if s.get("class_rank") is not None else 999999,
+            s.get("rank") if s.get("rank") is not None else 999999,
+            s.get("name", ""),
+        ),
+    )
+    for cs in sorted_cls_students:
+        sid = cs["id"]
+        in_high = sid in curr_ev_high["elite_ids"]
+        in_main = sid in curr_ev_main["elite_ids"]
+        tier = "high" if in_high else ("main" if in_main else "below")
+        tier_label = f"前{high_pct_label}" if in_high else (f"前{main_pct_label}" if in_main else "—")
+
+        ps = compare_by_id.get(sid) if cs.get("identity_reliable") else None
+        prev_total = ps.get("total") if ps else None
+        prev_rank = ps.get("rank") if ps else None
+        total_delta = _diff(cs.get("total"), prev_total, 1)
+        rank_gain = int(prev_rank - cs["rank"]) if (prev_rank is not None and cs.get("rank") is not None) else None
+        is_big_gain = rank_gain is not None and rank_gain >= shift_threshold
+        is_big_drop = rank_gain is not None and (-rank_gain) >= shift_threshold
+        if rank_gain is not None:
+            rank_gains_list.append(rank_gain)
+            if is_big_gain:
+                big_gain_count += 1
+            if is_big_drop:
+                big_drop_count += 1
+
+        prev_weak_names = [w["subject"] for w in (ps.get("weak") or [])[:2]] if ps else []
+        persist_set = persistent_by_student.get(sid, set()) | set(prev_weak_names)
+        curr_weak_items = [
+            {
+                "subject": w["subject"],
+                "score": (cs.get("scores") or {}).get(w["subject"]),
+                "rank": (cs.get("ranks") or {}).get(w["subject"]),
+                "persistent": w["subject"] in persist_set,
+            }
+            for w in (cs.get("weak") or [])[:weak_display_limit]
+        ]
+
+        biggest_drop_sub = None
+        biggest_gain_sub = None
+        sub_mover_text = "—"
+        if ps and compare_common_subs:
+            drops = []
+            gains = []
+            for sub in compare_common_subs:
+                pr = (ps.get("ranks") or {}).get(sub)
+                cr = (cs.get("ranks") or {}).get(sub)
+                if pr is None or cr is None:
+                    continue
+                delta = int(pr - cr)  # positive = improved, negative = dropped
+                if delta < 0:
+                    drops.append((abs(delta), sub))
+                elif delta > 0:
+                    gains.append((delta, sub))
+            if drops:
+                drops.sort(reverse=True)
+                biggest_drop_sub = {"subject": drops[0][1], "delta": drops[0][0]}
+            if gains:
+                gains.sort(reverse=True)
+                biggest_gain_sub = {"subject": gains[0][1], "delta": gains[0][0]}
+            if rank_gain is not None and rank_gain <= -10 and biggest_drop_sub and biggest_drop_sub["delta"] >= 15:
+                sub_mover_text = f"{biggest_drop_sub['subject']}↓{biggest_drop_sub['delta']}"
+            elif rank_gain is not None and rank_gain >= 10 and biggest_gain_sub and biggest_gain_sub["delta"] >= 15:
+                sub_mover_text = f"{biggest_gain_sub['subject']}↑{biggest_gain_sub['delta']}"
+            else:
+                d_val = biggest_drop_sub["delta"] if biggest_drop_sub else 0
+                g_val = biggest_gain_sub["delta"] if biggest_gain_sub else 0
+                if max(d_val, g_val) >= 25:
+                    if d_val >= g_val and biggest_drop_sub:
+                        sub_mover_text = f"{biggest_drop_sub['subject']}↓{d_val}"
+                    elif biggest_gain_sub:
+                        sub_mover_text = f"{biggest_gain_sub['subject']}↑{g_val}"
+                else:
+                    sub_mover_text = "平稳"
+
+        student_comp_rows.append({
+            "id": sid,
+            "name": cs["name"],
+            "class_rank": cs.get("class_rank"),
+            "total": cs.get("total"),
+            "rank": cs.get("rank"),
+            "tier": tier,
+            "tier_label": tier_label,
+            "prev_total": prev_total,
+            "prev_rank": prev_rank,
+            "total_delta": total_delta,
+            "rank_gain": rank_gain,
+            "is_big_gain": is_big_gain,
+            "is_big_drop": is_big_drop,
+            "weak": curr_weak_items,
+            "prev_weak": prev_weak_names,
+            "biggest_drop_sub": biggest_drop_sub,
+            "biggest_gain_sub": biggest_gain_sub,
+            "sub_mover_text": sub_mover_text,
+            "in_borderline_high": sid in bh_ids,
+            "in_borderline_main": sid in bm_ids,
+            "in_mentor": sid in mentor_ids,
+            "in_drop_alert": sid in drop_ids,
+        })
+
+    student_comparison = {
+        "compare_exam": compare_info,
+        "compare_options": compare_options,
+        "matched_count": len(rank_gains_list),
+        "big_gain_count": big_gain_count,
+        "big_drop_count": big_drop_count,
+        "avg_rank_gain": rounded(sum(rank_gains_list) / len(rank_gains_list), 1) if rank_gains_list else None,
+        "rows": student_comp_rows,
+    }
+
+    # Build privacy-safe multi-tier (A1/A2/B1/B2/C1/C2) teacher lever profile — ZERO raw scores, ZERO exact ranks!
+    raw_bounds = curr_rules.get("level_bounds") or [
+        {"label": "A1", "ratio": 0.18}, {"label": "A2", "ratio": 0.30},
+        {"label": "B1", "ratio": 0.55}, {"label": "B2", "ratio": 0.80},
+        {"label": "C1", "ratio": 0.90}, {"label": "C2", "ratio": 1.0},
+    ]
+    tier_pairs = []
+    for item in raw_bounds:
+        if isinstance(item, dict) and item.get("label") and item.get("ratio") is not None:
+            tier_pairs.append((str(item["label"]), float(item["ratio"])))
+        elif isinstance(item, (list, tuple)) and len(item) >= 2:
+            tier_pairs.append((str(item[0]), float(item[1])))
+    if not tier_pairs:
+        tier_pairs = [("A1", 0.18), ("A2", 0.30), ("B1", 0.55), ("B2", 0.80), ("C1", 0.90), ("C2", 1.0)]
+    tiers = [lbl for lbl, _ in tier_pairs]
+    tier_index = {lbl: idx for idx, lbl in enumerate(tiers)}
+    tier_expected: dict[str, float] = {}
+    prev_cum = 0.0
+    for lbl, cum in tier_pairs:
+        tier_expected[lbl] = rounded((cum - prev_cum) * 100.0, 1)
+        prev_cum = cum
+
+    a_tiers = [t for t in tiers if t.upper().startswith("A")] or tiers[:max(1, min(2, len(tiers)))]
+    a_set = set(a_tiers)
+    c_tiers = [t for t in tiers if t.upper().startswith("C")] or tiers[max(1, len(tiers) - 2):]
+    c_set = set(c_tiers)
+    good_set = set(a_tiers) | {t for t in tiers if t.upper() in ("B1", "B")}
+    if len(good_set) == len(tiers) and len(tiers) > 2:
+        good_set = set(tiers[: (len(tiers) + 1) // 2])
+    top_tier = tiers[0] if tiers else "A1"
+    second_tier = tiers[1] if len(tiers) > 1 else top_tier
+
+    # Compute rank boundary per tier internally ONLY to identify "升档临界" without ever exposing scores/ranks
+    grade_n = int(curr_analysis["summary"]["participants"] or 0)
+    tier_upper_rank: dict[str, int] = {}
+    rounding_mode = curr_rules.get("cutoff_rounding", "floor")
+    for lbl, cum in tier_pairs:
+        tier_upper_rank[lbl] = rank_position(grade_n, cum, rounding_mode) if grade_n else 0
+    push_margin = max(12, min(borderline_band, max(12, int(grade_n * 0.05)))) if grade_n else 15
+
+    curr_level_counts = Counter((s.get("levels") or {}).get("总分") for s in curr_cls_active)
+    prev_cls_active = []
+    if chosen_compare_tuple is not None:
+        _, cmp_ana, _ = chosen_compare_tuple
+        prev_cls_active = [s for s in cmp_ana["students"] if s["class"] == cls and s.get("eligible")]
+    prev_level_counts = Counter((s.get("levels") or {}).get("总分") for s in prev_cls_active)
+
+    cls_n = len(curr_cls_active)
+    total_distribution = []
+    for lbl in tiers:
+        cnt = curr_level_counts.get(lbl, 0)
+        rate = _pct(cnt, cls_n)
+        exp = tier_expected.get(lbl, 0.0)
+        p_cnt = prev_level_counts.get(lbl, 0) if prev_cls_active else None
+        total_distribution.append({
+            "level": lbl,
+            "count": cnt,
+            "rate": rate,
+            "expected_rate": exp,
+            "rate_diff": _diff(rate, exp, 1),
+            "prev_count": p_cnt,
+            "delta_count": (cnt - p_cnt) if p_cnt is not None else None,
+        })
+
+    a_cls_rate = _pct(sum(curr_level_counts.get(t, 0) for t in a_set), cls_n) or 0.0
+    a_exp_rate = sum(tier_expected.get(t, 0.0) for t in a_set)
+    c_cls_rate = _pct(sum(curr_level_counts.get(t, 0) for t in c_set), cls_n) or 0.0
+    c_exp_rate = sum(tier_expected.get(t, 0.0) for t in c_set)
+    if a_cls_rate >= a_exp_rate + 4 and c_cls_rate >= c_exp_rate + 4:
+        structure_tag = "哑铃分化（优生强 · 尾段偏厚）"
+    elif a_cls_rate >= a_exp_rate + 4 and c_cls_rate <= c_exp_rate:
+        structure_tag = "尖优引领（整体高位）"
+    elif c_cls_rate >= c_exp_rate + 5:
+        structure_tag = "尾段偏厚 · 优先抓基础兜底"
+    elif a_cls_rate <= a_exp_rate - 5 and c_cls_rate <= c_exp_rate + 2:
+        structure_tag = "纺锤偏中 · 缺拔高冲优"
+    else:
+        structure_tag = "结构均衡"
+
+    # Subject desensitized synergy + 4-tier classroom teaching groups (NO mean, NO cutoff, NO rank)
+    subject_synergy = []
+    for sub in curr_analysis["subjects"]:
+        sub_cnts = Counter()
+        valid_sub_n = 0
+        mismatch_a = []
+        grp_top, grp_push, grp_steady, grp_support = [], [], [], []
+        for s in sorted(curr_cls_active, key=lambda x: x.get("name", "")):
+            slvl = (s.get("levels") or {}).get(sub)
+            tlvl = (s.get("levels") or {}).get("总分")
+            if not slvl:
+                continue
+            sub_cnts[slvl] += 1
+            valid_sub_n += 1
+            if tlvl in a_set and slvl not in a_set:
+                mismatch_a.append({"name": s["name"], "total_level": tlvl, "sub_level": slvl})
+            if slvl == top_tier:
+                grp_top.append(s["name"])
+            elif slvl == second_tier or (tlvl in a_set and slvl not in a_set):
+                grp_push.append(s["name"])
+            elif slvl in c_set:
+                grp_support.append(s["name"])
+            else:
+                grp_steady.append(s["name"])
+
+        sub_a_rate = _pct(sum(sub_cnts.get(t, 0) for t in a_set), valid_sub_n)
+        sub_good_rate = _pct(sum(sub_cnts.get(t, 0) for t in good_set), valid_sub_n)
+        sub_c_rate = _pct(sum(sub_cnts.get(t, 0) for t in c_set), valid_sub_n)
+        subject_synergy.append({
+            "subject": sub,
+            "teacher": curr_teachers_map.get(cls, {}).get("subjects", {}).get(sub, ""),
+            "counts": {lbl: sub_cnts.get(lbl, 0) for lbl in tiers},
+            "a_rate": sub_a_rate,
+            "good_rate": sub_good_rate,
+            "c_rate": sub_c_rate,
+            "mismatch_a_count": len(mismatch_a),
+            "mismatch_a_students": mismatch_a,
+            "teaching_groups": [
+                {"id": "top", "label": f"拔尖拓展组（{top_tier}）", "hint": "拓展思维与压轴题，鼓励自主探究", "names": grp_top},
+                {"id": "push", "label": f"冲优提质组（{second_tier} / 总评A未达A）", "hint": "规范答题与中难题突破，重点冲高档", "names": grp_push},
+                {"id": "steady", "label": "夯基稳中组（中层）", "hint": "抓中档得分点与错题二次过关", "names": grp_steady},
+                {"id": "support", "label": f"基础兜底组（{'/'.join(c_tiers)}）", "hint": "抓核心概念、基础题面批与信心建立", "names": grp_support},
+            ],
+        })
+
+    # Per-student zero-score, zero-rank teacher levers (sorted by tier + name so row position never reveals exact rank!)
+    up_count = same_count = down_count = 0
+    flow_pair_counts = Counter()
+    student_levers = []
+    comp_by_sid = {r["id"]: r for r in student_comp_rows}
+
+    for cs in curr_cls_active:
+        sid = cs["id"]
+        lvl = (cs.get("levels") or {}).get("总分") or (tiers[-1] if tiers else "—")
+        abc = (cs.get("grades") or {}).get("总分") or "—"
+        curr_idx = tier_index.get(lvl, len(tiers))
+
+        ps = compare_by_id.get(sid) if cs.get("identity_reliable") else None
+        prev_lvl = (ps.get("levels") or {}).get("总分") if ps else None
+        prev_idx = tier_index.get(prev_lvl) if prev_lvl in tier_index else None
+
+        level_step = (prev_idx - curr_idx) if (prev_idx is not None and curr_idx < len(tiers)) else None
+        if level_step is not None:
+            if level_step > 0:
+                up_count += 1
+                flow_pair_counts[f"{prev_lvl}→{lvl}"] += 1
+                transition_text = f"{prev_lvl}→{lvl}（升{level_step}档）"
+            elif level_step < 0:
+                down_count += 1
+                flow_pair_counts[f"{prev_lvl}→{lvl}"] += 1
+                transition_text = f"{prev_lvl}→{lvl}（降{abs(level_step)}档）"
+            else:
+                same_count += 1
+                transition_text = f"守档（{lvl}）"
+        else:
+            transition_text = "—"
+
+        # Qualitative status signal (derived internally without leaking any numeric rank!)
+        comp_rec = comp_by_sid.get(sid) or {}
+        rk_gain = comp_rec.get("rank_gain")
+        if (level_step is not None and level_step >= 2) or (level_step is not None and level_step >= 1 and comp_rec.get("is_big_gain")) or comp_rec.get("is_big_gain"):
+            status_code, status_label = "surge", "🚀 显著跃升"
+        elif (level_step is not None and level_step <= -2) or (level_step is not None and level_step <= -1 and comp_rec.get("is_big_drop")) or comp_rec.get("is_big_drop"):
+            status_code, status_label = "slide", "⚠️ 明显滑坡·优先谈心"
+        elif (level_step is not None and level_step > 0) or (rk_gain is not None and rk_gain >= max(15, shift_threshold // 3)):
+            status_code, status_label = "rise", "↗ 稳步上行"
+        elif (level_step is not None and level_step < 0) or (rk_gain is not None and rk_gain <= -max(15, shift_threshold // 3)):
+            status_code, status_label = "dip", "↘ 略有回落"
+        else:
+            status_code, status_label = "steady", "● 稳定守档"
+
+        # Upper-tier push target ("临门一脚" — without revealing exact rank or score gap!)
+        push_target = None
+        if curr_idx > 0 and curr_idx < len(tiers) and cs.get("rank") is not None:
+            target_lvl = tiers[curr_idx - 1]
+            upper_bound_rank = tier_upper_rank.get(target_lvl, 0)
+            if upper_bound_rank > 0 and cs["rank"] <= upper_bound_rank + push_margin:
+                target_idx = curr_idx - 1
+                blocks = []
+                for sub in curr_analysis["subjects"]:
+                    sl = (cs.get("levels") or {}).get(sub)
+                    if sl in tier_index and tier_index[sl] > target_idx:
+                        blocks.append({"subject": sub, "level": sl, "gap_steps": tier_index[sl] - target_idx})
+                blocks.sort(key=lambda x: -x["gap_steps"])
+                push_target = {
+                    "target_level": target_lvl,
+                    "label": f"冲 {target_lvl}",
+                    "single_block": len(blocks) == 1,
+                    "block_subjects": [f"{b['subject']}({b['level']})" for b in blocks[:2]],
+                }
+
+        # Drag subjects (sub level strictly worse than total level, prioritizing >= 2 steps & persistent)
+        prev_weak_names = set(comp_rec.get("prev_weak") or [])
+        persist_set = persistent_by_student.get(sid, set()) | prev_weak_names
+        drag_list = []
+        strength_list = []
+        sub_lvls_map = {}
+        for sub in curr_analysis["subjects"]:
+            sl = (cs.get("levels") or {}).get(sub)
+            if not sl:
+                continue
+            sub_lvls_map[sub] = sl
+            s_idx = tier_index.get(sl, len(tiers))
+            step_diff = s_idx - curr_idx  # positive = subject lags behind total tier
+            if step_diff >= 1:
+                drag_list.append({
+                    "subject": sub,
+                    "level": sl,
+                    "drag_steps": step_diff,
+                    "persistent": sub in persist_set,
+                })
+            elif step_diff <= 0:
+                strength_list.append({"subject": sub, "level": sl, "lead_steps": -step_diff})
+        drag_list.sort(key=lambda x: (-x["drag_steps"], not x["persistent"], x["subject"]))
+        # If no subject lags in tier (e.g. all C2), fall back to top 2 weak subjects with their levels (zero scores!)
+        if not drag_list:
+            for w in (cs.get("weak") or [])[:2]:
+                sub = w["subject"]
+                sl = sub_lvls_map.get(sub)
+                if sl:
+                    drag_list.append({
+                        "subject": sub,
+                        "level": sl,
+                        "drag_steps": 0,
+                        "persistent": sub in persist_set,
+                    })
+        strength_list.sort(key=lambda x: (-x["lead_steps"], tier_index.get(x["level"], 99), x["subject"]))
+
+        # Qualitative driver (no numeric rank delta!)
+        driver_parts = []
+        if ps and compare_common_subs:
+            sub_step_drops = []
+            sub_step_ups = []
+            for sub in compare_common_subs:
+                pl = (ps.get("levels") or {}).get(sub)
+                cl = (cs.get("levels") or {}).get(sub)
+                if pl in tier_index and cl in tier_index:
+                    sd = tier_index[pl] - tier_index[cl]  # >0 improved, <0 dropped
+                    if sd < 0:
+                        sub_step_drops.append((abs(sd), sub))
+                    elif sd > 0:
+                        sub_step_ups.append((sd, sub))
+            sub_step_drops.sort(reverse=True)
+            sub_step_ups.sort(reverse=True)
+            if status_code in ("slide", "dip") and sub_step_drops:
+                driver_parts.append("、".join(s for _, s in sub_step_drops[:2]) + "降档")
+            elif status_code in ("surge", "rise") and sub_step_ups:
+                driver_parts.append("、".join(s for _, s in sub_step_ups[:2]) + "升档")
+            elif sub_step_drops and sub_step_drops[0][0] >= 2:
+                driver_parts.append(f"{sub_step_drops[0][1]}降档明显")
+            elif sub_step_ups and sub_step_ups[0][0] >= 2:
+                driver_parts.append(f"{sub_step_ups[0][1]}升档明显")
+        driver_text = "；".join(driver_parts) if driver_parts else ("各科均衡" if ps else "—")
+
+        is_drag = any(d["drag_steps"] >= 2 or d["persistent"] for d in drag_list)
+        student_levers.append({
+            "id": sid,
+            "name": cs["name"],
+            "level": lvl,
+            "abc": abc,
+            "prev_level": prev_lvl,
+            "level_step": level_step,
+            "transition_text": transition_text,
+            "status_code": status_code,
+            "status_label": status_label,
+            "push_target": push_target,
+            "drag_subjects": drag_list[:3],
+            "strength_subjects": strength_list[:2],
+            "driver_text": driver_text,
+            "subject_levels": sub_lvls_map,
+            "is_slide": status_code in ("slide", "dip") or (level_step is not None and level_step < 0),
+            "is_push": push_target is not None,
+            "is_drag": is_drag,
+            "is_surge": status_code in ("surge", "rise") or (level_step is not None and level_step > 0),
+        })
+
+    # CRITICAL PRIVACY INVARIANT: Sort by (tier_index, name), NEVER by exact score or rank!
+    student_levers.sort(key=lambda x: (tier_index.get(x["level"], 99), x["name"]))
+
+    level_profile = {
+        "tiers": tiers,
+        "a_tiers": a_tiers,
+        "c_tiers": c_tiers,
+        "structure_tag": structure_tag,
+        "total_distribution": total_distribution,
+        "transitions": {
+            "available": bool(compare_info and (up_count + same_count + down_count) > 0),
+            "compare_exam": compare_info,
+            "matched_count": up_count + same_count + down_count,
+            "up_count": up_count,
+            "same_count": same_count,
+            "down_count": down_count,
+            "top_flows": [
+                {"flow": k, "count": v}
+                for k, v in flow_pair_counts.most_common(6)
+            ],
+        },
+        "subject_synergy": subject_synergy,
+        "student_levers": student_levers,
+        "counts": {
+            "all": len(student_levers),
+            "slide": sum(1 for x in student_levers if x["is_slide"]),
+            "push": sum(1 for x in student_levers if x["is_push"]),
+            "drag": sum(1 for x in student_levers if x["is_drag"]),
+            "surge": sum(1 for x in student_levers if x["is_surge"]),
+        },
+    }
+
     return {
         "meta": {
             "grade": curr_info["grade"],
@@ -678,6 +1150,8 @@ def build_class_brief(
             "breakthroughs": breakthroughs[:15],
             "mentor_list": mentor_list,
         },
+        "student_comparison": student_comparison,
+        "level_profile": level_profile,
         "timeline": timeline,
         "current_subject_matrix": curr_subject_matrix,
         "current_weak_summary": weak_summary_rows,

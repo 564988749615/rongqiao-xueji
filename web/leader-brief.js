@@ -467,6 +467,8 @@
             <details class="print-menu">
               <summary class="btn secondary small">更多打印模板 ▾</summary>
               <div class="print-menu-list">
+                <button type="button" data-action="open-print-studio"><strong>分模块组合打印台…（推荐）</strong><small>自由勾选 8 大模块与排序，含全班较上次对比</small></button>
+                <div class="print-menu-divider"></div>
                 <button type="button" data-action="print-tpl1-leader"><strong>打印模板1 · 领导版</strong><small>A4 纵向 · 展示历次前 50–800 名</small></button>
                 <button type="button" data-action="print-tpl1-teacher"><strong>打印模板1 · 教师版</strong><small>A4 纵向 · 展示历次前 200–800 名</small></button>
                 <button type="button" data-action="print-tpl2"><strong>打印模板2 · 有效分与薄弱科</strong><small>A4 横向 · 达标集中 + 单科矩阵 + 薄弱科</small></button>
@@ -476,6 +478,7 @@
                 <button type="button" data-action="download-class-zip"><strong>一键按班拆包导出 ZIP（发班主任）</strong><small>每班独立文件夹 · 本班明细 Excel + 打印版</small></button>
               </div>
             </details>
+            ${btn('分模块打印', 'open-print-studio', '', 'secondary small')}
             ${btn('打印 · 领导谈话卡', 'print-brief-card', '', 'primary small')}
           </div>
         </div>
@@ -552,6 +555,10 @@
         </div>
         ${renderActionListsHTML(brief, state.briefListTab || 'high')}
       </section>
+
+      ${window.LeaderLevels ? window.LeaderLevels.renderLevelsSectionHTML(brief, state) : ''}
+
+      ${window.LeaderPrintStudio ? window.LeaderPrintStudio.renderComparisonSectionHTML(brief, state) : ''}
 
       <section class="panel">
         <div class="section-title">

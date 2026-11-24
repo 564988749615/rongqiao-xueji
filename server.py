@@ -1354,6 +1354,7 @@ class Handler(BaseHTTPRequestHandler):
             grade = str(payload.get('grade') or target_info['grade'])
             high_ratio = float(payload['high_ratio']) if payload.get('high_ratio') is not None else None
             main_ratio = float(payload['main_ratio']) if payload.get('main_ratio') is not None else None
+            compare_exam_id = str(payload.get('compare_exam_id') or '').strip() or None
             with db() as conn:
                 saved = conn.execute(
                     'SELECT * FROM exams WHERE archived=0 AND grade=? ORDER BY exam_date, created_at, id',
@@ -1368,7 +1369,10 @@ class Handler(BaseHTTPRequestHandler):
             if payload.get('all_classes'):
                 target_analysis = next(a for info, a, _ in grade_exams if info['id'] == exam_id)
                 briefs = [
-                    build_class_brief(grade_exams, exam_id, cls, high_ratio=high_ratio, main_ratio=main_ratio)
+                    build_class_brief(
+                        grade_exams, exam_id, cls,
+                        high_ratio=high_ratio, main_ratio=main_ratio, compare_exam_id=compare_exam_id,
+                    )
                     for cls in target_analysis['classes']
                 ]
                 return self.send(dict(briefs=briefs))
@@ -1377,7 +1381,10 @@ class Handler(BaseHTTPRequestHandler):
                 target_analysis = next(a for info, a, _ in grade_exams if info['id'] == exam_id)
                 cls = target_analysis['classes'][0]
             return self.send(
-                build_class_brief(grade_exams, exam_id, cls, high_ratio=high_ratio, main_ratio=main_ratio)
+                build_class_brief(
+                    grade_exams, exam_id, cls,
+                    high_ratio=high_ratio, main_ratio=main_ratio, compare_exam_id=compare_exam_id,
+                )
             )
         if path == '/api/student-cards':
             exam_id = str(payload.get('exam_id', '')).strip()
