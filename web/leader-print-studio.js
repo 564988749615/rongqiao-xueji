@@ -18,7 +18,7 @@
     { id: 'M1', name: '班情核心 KPI 与谈话要点', desc: '双线人数/占比、较上次与首考增减、尖优含金量、均分及核心谈话要点' },
     { id: 'M2', name: '双线分学科诊断与同师对比', desc: '任课教师、各科均分、双线达标/集中与贡献差、同师另班对照' },
     { id: 'M3', name: '历次双线走势与人员流动', desc: '历次 20%/40% 双线走势图 + 较上次保尖率、守线率、掉线/突围流动' },
-    { id: 'M4', name: '学生较上次对比明细表', desc: 'A4 竖版精简 1 页排全班：本次/上次总分与名次、名次进退、薄弱科、单科波动' },
+    { id: 'M4', name: '学生较上次对比明细表', desc: 'A4 竖版大字号精简 5 列：序、姓名、本次名、名次进退、薄弱科，并自动标注前 20% / 前 40% 分界线' },
     { id: 'M5', name: '分层抓手与包干微名单', desc: '冲尖优临界、保达标临界、中优层流失预警、连续薄弱学科、导师制名单' },
     { id: 'M6', name: '历次单科名次段纵向对比', desc: '原模板1：总分与各科历次名次段趋势（可选领导版 50–800 或教师版 200–800）' },
     { id: 'M7', name: '有效分与薄弱科统计矩阵', desc: '原模板2：历次达标集中率 + 本次单科前 100–500 矩阵 + 薄弱学科统计' },
@@ -561,49 +561,79 @@
     const comp = brief.student_comparison || {};
     const rows = filterComparisonRows(comp.rows || [], cfg.m4Filter, cfg.m4Sort);
     const base = comp.compare_exam;
+    const h = brief.headline || {};
+    const hLabel = h.high?.label || '前20%';
+    const mLabel = h.main?.label || '前40%';
+    const hShort = hLabel.replace(/^前/, '');
+    const mShort = mLabel.replace(/^前/, '');
+    const hCutoff = h.high?.cutoff;
+    const mCutoff = h.main?.cutoff;
     const filterNames = { all: '全班学生', big_shift: '显著进退学生', big_drop: '显著退步学生', big_gain: '显著进步学生', borderline: '双线临界生', mentor: '导师制名单' };
     const sortLabels = { rank: '按本次名次排序', surname: '按姓氏拼音排序', drop: '按退步优先排序', gain: '按进步优先排序' };
-    const trs = rows.map((r, idx) => {
+
+    const isRankOrder = cfg.m4Sort === 'rank';
+    const highCount = rows.filter(r => r.tier === 'high').length;
+    const mainCumCount = rows.filter(r => r.tier === 'high' || r.tier === 'main').length;
+    let lastHighIdx = -1;
+    let lastMainIdx = -1;
+    if (isRankOrder) {
+      rows.forEach((r, idx) => {
+        if (r.tier === 'high') lastHighIdx = idx;
+        if (r.tier === 'high' || r.tier === 'main') lastMainIdx = idx;
+      });
+    }
+
+    const cutRowHTML = (kind, text) =>
+      `<tr class="pm-cut-row is-${kind}"><td colspan="5"><div class="pm-cut-line"><span class="pm-cut-badge is-${kind}">${e(text)}</span></div></td></tr>`;
+    const highCutText = `▲ 以上为 ${hLabel} 尖优线（本班 ${highCount} 人${hCutoff != null ? ` · 线 ${n(hCutoff, 1)}分` : ''}）`;
+    const mainCutText = `▲ 以上为 ${mLabel} 基本盘线（本班累计 ${mainCumCount} 人${mCutoff != null ? ` · 线 ${n(mCutoff, 1)}分` : ''}）`;
+
+    const trParts = [];
+    if (rows.length && isRankOrder && highCount === 0) {
+      trParts.push(cutRowHTML('high', highCutText));
+      if (mainCumCount === 0) trParts.push(cutRowHTML('main', mainCutText));
+    }
+
+    rows.forEach((r, idx) => {
       const g = r.rank_gain;
       const gText = g == null ? '—' : g === 0 ? '0' : g > 0 ? `▲+${g}` : `▼-${Math.abs(g)}`;
       const gCls = g == null || g === 0 ? '' : g > 0 ? 'g-up' : 'g-dn';
       const strong = (r.is_big_gain || r.is_big_drop) ? ' is-bold' : '';
       const weakHtmlPrint = formatWeakPrintHTML(r.weak);
-      const mv = r.sub_mover_text || '—';
-      const mvCls = mv.includes('↓') ? 'g-dn' : mv.includes('↑') ? 'g-up' : '';
-      const seqNo = cfg.m4Sort === 'rank' ? n(r.class_rank, 0) : (idx + 1);
-      return `<tr class="${r.is_big_drop ? 'row-alert' : r.is_big_gain ? 'row-good' : ''}">
+      const seqNo = isRankOrder ? n(r.class_rank, 0) : (idx + 1);
+      const tierChip = !isRankOrder && (r.tier === 'high' || r.tier === 'main')
+        ? ` <span class="pm-tier-chip is-${r.tier}">${e(r.tier === 'high' ? hShort : mShort)}</span>`
+        : '';
+      trParts.push(`<tr class="${r.is_big_drop ? 'row-alert' : r.is_big_gain ? 'row-good' : ''}">
         <td class="num">${seqNo}</td>
-        <td><b>${e(r.name)}</b></td>
-        <td class="c">${e(r.tier_label)}</td>
-        <td class="num">${n(r.total, 1)}</td>
+        <td class="nm-cell"><b>${e(r.name)}</b>${tierChip}</td>
         <td class="num">${n(r.rank, 0)}</td>
-        <td class="num">${r.prev_total == null ? '—' : n(r.prev_total, 1)}</td>
-        <td class="num">${r.prev_rank == null ? '—' : n(r.prev_rank, 0)}</td>
         <td class="num ${gCls}${strong}">${gText}</td>
         <td class="wk-cell">${weakHtmlPrint}</td>
-        <td class="${mvCls}">${e(mv)}</td>
-      </tr>`;
-    }).join('') || '<tr><td colspan="10" class="c">当前筛选范围内没有学生记录。</td></tr>';
+      </tr>`);
+      if (isRankOrder && idx === lastHighIdx) {
+        trParts.push(cutRowHTML('high', highCutText));
+      }
+      if (isRankOrder && idx === lastMainIdx) {
+        trParts.push(cutRowHTML('main', mainCutText));
+      }
+    });
 
+    const trs = trParts.join('') || '<tr><td colspan="5" class="c">当前筛选范围内没有学生记录。</td></tr>';
+    const densityCls = rows.length > 56 ? ' is-compact' : rows.length <= 44 ? ' is-roomy' : '';
     const pageBreakCls = cfg.m4PageBreak && !isFirstModule ? ' pm-break-before' : '';
     return `<section class="pm-mod pm-m4${pageBreakCls}">
       <div class="pm-mod-head">
         <h3>学生较上次对比明细表（${e(filterNames[cfg.m4Filter] || '全班学生')} · ${rows.length} 人）</h3>
-        <span>${e(sortLabels[cfg.m4Sort] || '按本次名次排序')} · 对比基准：${base ? `${e(base.name)}（${e(base.date)}）` : '暂无历史对照'} · ★连续薄弱科</span>
+        <span>${e(hLabel)} ${highCount} 人 · ${e(mLabel)} ${mainCumCount} 人 · ${e(sortLabels[cfg.m4Sort] || '按本次名次排序')} · 对比：${base ? `${e(base.name)}` : '无'} · ★连弱</span>
       </div>
-      <table class="pm-table pm-comp-table">
+      <table class="pm-table pm-comp-table${densityCls}">
         <thead><tr>
-          <th class="num" style="width:24px">序</th>
-          <th style="width:46px">姓名</th>
-          <th class="c" style="width:38px">层级</th>
-          <th class="num" style="width:42px">本次分</th>
-          <th class="num" style="width:42px">本次名</th>
-          <th class="num" style="width:42px">上次分</th>
-          <th class="num" style="width:42px">上次名</th>
-          <th class="num" style="width:48px">名次进退</th>
+          <th class="num" style="width:32px">序</th>
+          <th style="width:74px">姓名</th>
+          <th class="num" style="width:54px">本次名</th>
+          <th class="num" style="width:66px">名次进退</th>
           <th>薄弱学科（本次分数/年级名次 · ★连弱）</th>
-          <th style="width:60px">单科波动</th>
         </tr></thead>
         <tbody>${trs}</tbody>
       </table>
@@ -826,8 +856,13 @@
   .pm-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .pm-table .c { text-align: center; }
   .pm-table small { font-size: 8.2px; color: #6c627e; }
-  .pm-comp-table { font-size: 8.6px; line-height: 1.26; }
-  .pm-comp-table th, .pm-comp-table td { padding: 2.2px 4px; }
+  .pm-comp-table { font-size: 10px; line-height: 1.32; }
+  .pm-comp-table th, .pm-comp-table td { padding: 2.6px 6px; }
+  .pm-comp-table.is-roomy { font-size: 10.6px; line-height: 1.38; }
+  .pm-comp-table.is-roomy th, .pm-comp-table.is-roomy td { padding: 3.4px 6.5px; }
+  .pm-comp-table.is-compact { font-size: 9.4px; line-height: 1.24; }
+  .pm-comp-table.is-compact th, .pm-comp-table.is-compact td { padding: 2px 5.5px; }
+  .pm-comp-table .nm-cell { white-space: nowrap; }
   .pm-m10-table { font-size: 8.1px; line-height: 1.18; table-layout: auto; }
   .pm-m10-table th, .pm-m10-table td { padding: 1.8px 3.5px; }
   .pm-m10-table.is-ultra-dense { font-size: 7.5px; line-height: 1.14; }
@@ -838,11 +873,21 @@
   .pm-m10-table tr.row-good { background: #f2faf5; }
   .pm-comp-table .wk-cell { font-variant-numeric: tabular-nums; }
   .pm-comp-table .wk-item { white-space: nowrap; }
-  .pm-comp-table .wk-item small { font-size: 7.9px; color: #5b5170; font-weight: 400; }
+  .pm-comp-table .wk-item small { font-size: 9.1px; color: #524867; font-weight: 400; }
   .pm-comp-table .wk-sep { color: #9c92b0; }
   .pm-comp-table tbody tr:nth-child(even) { background: #faf9fc; }
   .pm-comp-table tr.row-alert { background: #fff4f4; }
   .pm-comp-table tr.row-good { background: #f2faf5; }
+  .pm-comp-table tr.pm-cut-row td { padding: 2px 6px !important; background: #fff !important; border-left: 1px solid #d9d1e8; border-right: 1px solid #d9d1e8; }
+  .pm-comp-table tr.pm-cut-row.is-high td { border-top: 2px solid #266b4e; border-bottom: 1px solid #d9d1e8; background: #eef7f2 !important; }
+  .pm-comp-table tr.pm-cut-row.is-main td { border-top: 2px dashed #5d3fa8; border-bottom: 1px solid #d9d1e8; background: #f4effb !important; }
+  .pm-cut-line { display: flex; align-items: center; justify-content: center; gap: 6px; }
+  .pm-cut-badge { display: inline-block; font-size: 9px; font-weight: 700; letter-spacing: 0.02em; padding: 0.5px 8px; border-radius: 99px; }
+  .pm-cut-badge.is-high { color: #19563d; background: #ddf0e6; border: 1px solid #7ab89d; }
+  .pm-cut-badge.is-main { color: #432882; background: #e8dff8; border: 1px solid #9f84d8; }
+  .pm-tier-chip { display: inline-block; font-size: 8px; font-weight: 650; padding: 0 3.5px; border-radius: 3px; vertical-align: middle; margin-left: 3px; }
+  .pm-tier-chip.is-high { background: #e2f3ea; color: #19563d; border: 1px solid #9acbb4; }
+  .pm-tier-chip.is-main { background: #efe9fa; color: #4a2e8d; border: 1px solid #b8a3e3; }
   .pm-tight { font-size: 8.5px; }
   .pm-tight th, .pm-tight td { padding: 2.2px 3.8px; }
   .row-latest td { background: #f3eefb !important; font-weight: 650; border-top: 1.4px solid #6f4eb8; border-bottom: 1.4px solid #6f4eb8; }
