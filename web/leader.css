@@ -1347,6 +1347,34 @@ tr[tabindex]:focus-visible { outline: 2px solid var(--primary); outline-offset: 
 @media (max-width: 780px) {
   .prompt-scenario-grid { grid-template-columns: 1fr; }
 }
+
+/* P1/P2: 学生一句话摘要条、跨考预警、小题分上传条、汇报模式缩放与列显隐 */
+.profile-headline-bar {
+  margin: 0 0 12px; padding: 10px 14px; border-radius: 8px;
+  background: var(--anchor); color: #ffffff; font-size: 13px; line-height: 1.55;
+}
+.profile-headline-bar small { display: block; font-size: 11px; color: rgba(255, 255, 255, 0.72); margin-bottom: 2px; }
+.alert-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin: 18px 0 10px; }
+.alert-panel-head h3 { margin: 0; font-size: 15px; }
+.item-upload-bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 12px; background: var(--surface-subtle); border: 1px solid var(--line); border-radius: 8px;
+}
+.present-zoom-controls {
+  display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px;
+  border: 1px solid var(--line); border-radius: 7px; background: var(--bg);
+}
+.present-zoom-controls span { font-size: 11.5px; color: var(--ink-secondary); min-width: 36px; text-align: center; font-variant-numeric: tabular-nums; }
+.col-toggle-menu { position: relative; }
+.col-toggle-menu summary { list-style: none; cursor: pointer; }
+.col-toggle-menu summary::-webkit-details-marker { display: none; }
+.col-toggle-panel {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 25; min-width: 210px; max-height: 280px; overflow: auto;
+  background: #ffffff; border: 1px solid var(--line-strong); border-radius: 8px; padding: 8px 10px;
+  box-shadow: 0 8px 24px rgba(30, 27, 46, 0.12); display: grid; gap: 6px;
+}
+.col-toggle-panel label { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--ink); cursor: pointer; }
+body.presenting main { font-size: calc(100% * var(--present-zoom, 1)); }
 .anchor-tags { display: flex; gap: 6px; flex-wrap: wrap; }
 .anchor-tags span {
   font-size: 11.5px; padding: 2px 8px; border-radius: 999px;

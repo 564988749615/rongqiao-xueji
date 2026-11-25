@@ -35,6 +35,11 @@ from distribution import (
     build_student_cards,
     build_student_cards_zip,
 )
+from item_analysis import (
+    analyze_item_scores,
+    build_item_template_xlsx,
+    parse_item_scores_file,
+)
 from engine import (
     PORTABLE_RULE_KEYS,
     analyze,
@@ -151,6 +156,14 @@ def init_db() -> None:
           );
           CREATE INDEX IF NOT EXISTS idx_score_edits_exam_revoked ON score_edits(exam_id, revoked_at);
           CREATE INDEX IF NOT EXISTS idx_score_edits_exam_cell ON score_edits(exam_id, row_id, subject);
+          CREATE TABLE IF NOT EXISTS item_analyses (
+            exam_id TEXT NOT NULL REFERENCES exams(id),
+            subject TEXT NOT NULL,
+            filename TEXT NOT NULL DEFAULT '',
+            dataset TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (exam_id, subject)
+          );
         ''')
         existing_cols = {row['name'] for row in conn.execute('PRAGMA table_info(exams)').fetchall()}
         for col_name, col_def in _EXAM_META_COLUMNS:
@@ -1303,6 +1316,34 @@ class Handler(BaseHTTPRequestHandler):
                 mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                 filename='融侨学迹_成绩更正模板.xlsx',
             )
+        if path == '/api/templates/item-scores.xlsx':
+            return self.send(
+                build_item_template_xlsx(),
+                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                filename='融侨学迹_小题分导入模板.xlsx',
+            )
+        match_items_get = re.fullmatch(r'/api/exams/([^/]+)/item-analyses', path)
+        if match_items_get:
+            exam_id = match_items_get.group(1)
+            get_exam(exam_id)
+            req_sub = (query.get('subject') or [''])[0].strip()
+            req_cls = (query.get('class') or [''])[0].strip()
+            with db() as conn:
+                rows = conn.execute(
+                    'SELECT subject, filename, dataset, updated_at FROM item_analyses WHERE exam_id=? ORDER BY subject',
+                    (exam_id,),
+                ).fetchall()
+            subjects_meta = [
+                {'subject': r['subject'], 'filename': r['filename'], 'updated_at': r['updated_at']}
+                for r in rows
+            ]
+            active_analysis = None
+            if rows:
+                target_r = next((r for r in rows if r['subject'] == req_sub), rows[0]) if req_sub else rows[0]
+                ds_obj = json.loads(target_r['dataset'])
+                active_analysis = analyze_item_scores(ds_obj, class_name=req_cls)
+                active_analysis['updated_at'] = target_r['updated_at']
+            return self.send(dict(exam_id=exam_id, subjects=subjects_meta, analysis=active_analysis))
         if path == '/api/trends':
             grade = query.get('grade', [''])[0]
             with db() as conn:
@@ -1498,6 +1539,36 @@ class Handler(BaseHTTPRequestHandler):
                 if cnt >= 2 or len(history_items) == 1
             ][:4]
             latest = history_items[-1]
+            # Deterministic one-sentence status summary for student profile drawer
+            summary_parts = []
+            if len(history_items) >= 2:
+                prev_item = history_items[-2]
+                prev_pr = prev_item.get('pr')
+                last_pr_v = latest.get('pr')
+                step_pr = round(last_pr_v - prev_pr, 1) if (prev_pr is not None and last_pr_v is not None) else None
+                if pr_delta is not None:
+                    if pr_delta >= 5:
+                        summary_parts.append(f'近 {len(history_items)} 场整体呈上升态势（较首考 PR +{pr_delta:.1f}）')
+                    elif pr_delta <= -5:
+                        summary_parts.append(f'近 {len(history_items)} 场相对位次有所回落（较首考 PR {pr_delta:.1f}）')
+                    else:
+                        summary_parts.append(f'近 {len(history_items)} 场整体表现平稳（较首考 PR {pr_delta:+.1f}）')
+                if step_pr is not None and abs(step_pr) >= 3:
+                    summary_parts.append(
+                        f'较上次「{prev_item["exam_name"]}」{"进步" if step_pr > 0 else "下滑"} {abs(step_pr):.1f} 个百分位'
+                    )
+            else:
+                pr_txt = f'超越年级 {latest["pr"]:.1f}% 同学' if latest.get('pr') is not None else '暂无年级百分位'
+                summary_parts.append(f'当前已关联 1 场考试（{latest["exam_name"]}），总评 {latest["total_level"]}，{pr_txt}')
+            if persistent_weak:
+                pw = persistent_weak[0]
+                if pw['hits'] >= 2:
+                    summary_parts.append(f'{pw["subject"]}连续 {pw["hits"]}/{pw["total_exams"]} 次为薄弱项，建议优先面批补弱')
+                else:
+                    summary_parts.append(f'本次优先关注 {pw["subject"]} 短板')
+            else:
+                summary_parts.append('各学科整体较为均衡')
+            headline_summary = '；'.join(summary_parts) + '。'
             return self.send(dict(
                 student=dict(
                     id=matched_student['id'],
@@ -1515,6 +1586,7 @@ class Handler(BaseHTTPRequestHandler):
                     latest_level=latest['total_level'],
                     pr_delta=pr_delta,
                     exam_count=len(history_items),
+                    headline_summary=headline_summary,
                 ),
                 history=history_items,
                 persistent_weak=persistent_weak,
@@ -2136,6 +2208,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not row['archived']:
                     raise ValueError('请先归档该考试，再执行彻底删除。')
                 with db() as conn:
+                    conn.execute('DELETE FROM item_analyses WHERE exam_id=?', (exam_id,))
                     conn.execute('DELETE FROM score_edits WHERE exam_id=?', (exam_id,))
                     conn.execute('DELETE FROM teachers WHERE exam_id=?', (exam_id,))
                     conn.execute('DELETE FROM notes WHERE exam_id=?', (exam_id,))
@@ -2338,6 +2411,41 @@ class Handler(BaseHTTPRequestHandler):
                     for r in saved
                 ]
             return self.send(build_student_cards(grade_exams, exam_id, class_name=class_name, student_id=student_id))
+        match_items_post = re.fullmatch(r'/api/exams/([^/]+)/item-analyses/(import|delete)', path)
+        if match_items_post:
+            exam_id, item_action = match_items_post.groups()
+            get_exam(exam_id)
+            if item_action == 'delete':
+                sub = str(payload.get('subject') or '').strip()
+                if not sub:
+                    raise ValueError('请指定要删除的小题分学科。')
+                with db() as conn:
+                    conn.execute('DELETE FROM item_analyses WHERE exam_id=? AND subject=?', (exam_id, sub))
+                return self.send(dict(ok=True, subject=sub))
+            subject = str(payload.get('subject') or '').strip()
+            if not subject:
+                raise ValueError('请先选择或填写小题分所属学科（如数学、语文）。')
+            filename = str(payload.get('filename') or '小题分.xlsx').strip()
+            raw_b64 = payload.get('content')
+            if not isinstance(raw_b64, str) or not raw_b64.strip():
+                raise ValueError('请先选择要导入的小题分文件。')
+            try:
+                content_bytes = base64.b64decode(raw_b64)
+            except Exception as exc:
+                raise ValueError('文件内容解码失败，请重新选择文件。') from exc
+            parsed = parse_item_scores_file(filename, content_bytes, subject=subject)
+            ts = now()
+            with db() as conn:
+                conn.execute(
+                    '''INSERT INTO item_analyses(exam_id, subject, filename, dataset, updated_at)
+                       VALUES(?,?,?,?,?)
+                       ON CONFLICT(exam_id, subject) DO UPDATE SET
+                         filename=excluded.filename, dataset=excluded.dataset, updated_at=excluded.updated_at''',
+                    (exam_id, subject, filename, encode(parsed), ts),
+                )
+            res = analyze_item_scores(parsed)
+            res['updated_at'] = ts
+            return self.send(dict(ok=True, analysis=res))
         if path == '/api/history':
             return self.send(calculate_history(payload))
         if path == '/api/export/xlsx':

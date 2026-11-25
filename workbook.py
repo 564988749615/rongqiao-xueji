@@ -155,7 +155,12 @@ def _score(value: Any, row: int, subject: str, warnings: list) -> float | int | 
 def _decrypt_and_validate_xlsx(content: bytes, password: str | None) -> bytes:
     if not content.startswith(b"PK"):
         if not password:
-            raise ValueError("文件可能已加密或不是有效的 .xlsx。请提供密码，或在 Excel 中另存为未加密的 .xlsx 后导入。")
+            raise ValueError(
+                "文件可能已加密或不是有效的 .xlsx。请提供密码，或在 Excel 中另存为未加密的 .xlsx 后导入。\n"
+                "排查建议：1) 若表格有打开密码，请展开「文件有密码？」填写后重试；"
+                "2) 若为 WPS/钉钉导出的加密表，先用 Excel 打开再「另存为 → Excel 工作簿 (.xlsx)」；"
+                "3) 确认文件不是手动改后缀名的 .xls 或 .csv。"
+            )
         try:
             import msoffcrypto
         except ImportError as exc:
@@ -197,7 +202,12 @@ def _xlsx_rows(content: bytes, password: str | None) -> tuple[list[list[Any]], s
                 visible_bonus = 1 if sheet.sheet_state == "visible" else 0
                 candidates.append((raw_bonus + len(mapping["subjects"]), visible_bonus, -order, sheet.title, header_index))
         if not candidates:
-            raise ValueError("未找到成绩表头。请在前20行包含“班级”和至少一门学科，如“语文”“数学”或“英语”。")
+            raise ValueError(
+                "未找到成绩表头。请在前20行包含“班级”和至少一门学科，如“语文”“数学”或“英语”。\n"
+                "排查建议：1) 检查表格顶部是否有超过 20 行的说明文字或空行；"
+                "2) 取消表头区域的跨行/跨列合并单元格，确保「班级」与各学科名在同一行；"
+                "3) 若有多个工作表，将原始成绩明细页放到第一个工作表或命名为「原始数据」。"
+            )
         _, _, _, name, header_index = max(candidates)
         sheet = workbook[name]
         if (sheet.max_row or 0) > MAX_ROWS + 20:
@@ -250,7 +260,12 @@ def _parse_score_rows(
         if not has_scores and not name and not stable_id:
             continue
         if not cls:
-            raise ValueError(f"第{source_row}行缺少班级，无法生成班级分析；请补全后重新导入。")
+            raise ValueError(
+                f"第{source_row}行缺少班级，无法生成班级分析；请补全后重新导入。\n"
+                "排查建议：1) 检查该行是否为表尾合计/备注行，若是请删除；"
+                "2) 若班级列使用了合并单元格，请取消合并并向下填充班号；"
+                "3) 补全该生班号（如 01、1班）后重新导入。"
+            )
         scores = {s: _score(raw_scores[s], source_row, s, warnings) for s in subjects}
         for subject, score in scores.items():
             if score is None:
@@ -333,7 +348,12 @@ def parse_workbook(content: bytes, filename: str, metadata: dict | None = None, 
     elif suffix in (".xlsx", ".xlsm"):
         rows, sheet_name, candidate_count = _xlsx_rows(content, password)
     else:
-        raise ValueError("支持 .xlsx、.xlsm 和 .csv。旧版 .xls 请先在 Excel 中另存为 .xlsx。")
+        raise ValueError(
+            "支持 .xlsx、.xlsm 和 .csv。旧版 .xls 请先在 Excel 中另存为 .xlsx。\n"
+            "排查建议：1) 在 Excel 或 WPS 中打开该文件，点击「另存为」选择「Excel 工作簿 (*.xlsx)」；"
+            "2) 若从阅卷系统导出的是网页伪装表格，同样另存为标准 .xlsx 即可正常解析；"
+            "3) 或点击「下载标准模板」对照格式导入。"
+        )
     return _parse_score_rows(rows, sheet_name, filename, metadata, candidate_count)
 
 

@@ -183,6 +183,84 @@ def calculate_history(saved_rows: list, payload: dict, analyze_fn, summary_fn) -
         record['rank'] = rank_map[record['composite']]
     result_rows.sort(key=lambda r: (r['rank'], r['class'], r['name']))
 
+    # Automated cross-exam academic early warning alerts
+    drop_thr = max(5, int(payload.get('alert_drop_threshold', 50) or 50))
+    pr_drop_thr = max(1.0, float(payload.get('alert_pr_drop_threshold', 10.0) or 10.0))
+    alerts = []
+    for rec in result_rows:
+        hist = rec.get('history') or []
+        if len(hist) < 2:
+            continue
+        prev_h, last_h = hist[-2], hist[-1]
+        first_h = hist[0]
+        last_rank_drop = (last_h['rank'] - prev_h['rank']) if (last_h.get('rank') and prev_h.get('rank')) else 0
+        first_rank_drop = (last_h['rank'] - first_h['rank']) if (last_h.get('rank') and first_h.get('rank')) else 0
+        last_pr_drop = _rounded((prev_h['pr'] - last_h['pr']), '0.1') if (prev_h.get('pr') is not None and last_h.get('pr') is not None) else 0.0
+        first_pr_drop = _rounded((first_h['pr'] - last_h['pr']), '0.1') if (first_h.get('pr') is not None and last_h.get('pr') is not None) else 0.0
+
+        consec_drops = 0
+        for i in range(len(hist) - 1, 0, -1):
+            r_curr, r_prev = hist[i].get('rank'), hist[i - 1].get('rank')
+            if r_curr is not None and r_prev is not None and r_curr > r_prev:
+                consec_drops += 1
+            else:
+                break
+
+        # Detect repeated weak subject across recent up to 3 exams
+        weak_counts: dict[str, int] = {}
+        for h_item in hist[-3:]:
+            for w in (h_item.get('weak') or [])[:2]:
+                sub_name = w.get('subject') if isinstance(w, dict) else str(w)
+                if sub_name:
+                    weak_counts[sub_name] = weak_counts.get(sub_name, 0) + 1
+        repeated_weak = [sub for sub, cnt in sorted(weak_counts.items(), key=lambda kv: (-kv[1], kv[0])) if cnt >= 2]
+
+        reasons = []
+        level = None
+        if last_rank_drop >= drop_thr or last_pr_drop >= pr_drop_thr:
+            level = 'high'
+            reasons.append(f'较上次退步 {last_rank_drop} 名（PR {(-last_pr_drop):+.1f}）')
+        if consec_drops >= 2:
+            if level != 'high' and first_rank_drop >= drop_thr:
+                level = 'high'
+            elif level is None:
+                level = 'warn'
+            reasons.append(f'连续 {consec_drops} 次下滑')
+        if first_pr_drop >= 8.0 or first_rank_drop >= int(drop_thr * 1.4):
+            if level is None:
+                level = 'warn'
+            reasons.append(f'较首考退步 {first_rank_drop} 名（PR {(-first_pr_drop):+.1f}）')
+        if repeated_weak and level is not None:
+            reasons.append(f'连续弱科：{"、".join(repeated_weak[:2])}')
+
+        if level:
+            alerts.append({
+                'id': rec['id'],
+                'name': rec['name'],
+                'class': rec['class'],
+                'level': level,
+                'level_label': '红色预警' if level == 'high' else '黄色关注',
+                'prev_rank': prev_h.get('rank'),
+                'latest_rank': last_h.get('rank'),
+                'last_rank_drop': last_rank_drop,
+                'last_pr_drop': last_pr_drop,
+                'first_pr_drop': first_pr_drop,
+                'latest_pr': last_h.get('pr'),
+                'consec_drops': consec_drops,
+                'repeated_weak': repeated_weak[:2],
+                'reasons': reasons,
+                'reason_text': '；'.join(reasons),
+            })
+
+    alerts.sort(key=lambda x: (0 if x['level'] == 'high' else 1, -(x['last_rank_drop'] or 0), -(x['first_pr_drop'] or 0), x['class'], x['name']))
+    alert_summary = {
+        'total': len(alerts),
+        'high_count': sum(1 for a in alerts if a['level'] == 'high'),
+        'warn_count': sum(1 for a in alerts if a['level'] == 'warn'),
+        'drop_threshold': drop_thr,
+        'pr_drop_threshold': pr_drop_thr,
+    }
+
     warnings = [
         '默认权重按考试先后取1、2、3…，可自行修改；这不是学校已确认的十次权重方案。',
         '年级百分位（PR，0–100，越高越好）与标准分（T分，年级均值为50、标准差为10）可消除试卷难易波动，更适合跨考试观察真实增值。',
@@ -196,4 +274,6 @@ def calculate_history(saved_rows: list, payload: dict, analyze_fn, summary_fn) -
         warnings=warnings,
         selected_exam_ids=[item['id'] for item in exams],
         subject_trends=subject_trends,
+        alerts=alerts,
+        alert_summary=alert_summary,
     )

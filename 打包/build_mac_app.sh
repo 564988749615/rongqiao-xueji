@@ -20,7 +20,7 @@ RUNTIME_DIR="$APP_DIR/.runtime"
 mkdir -p "$MACOS" "$RESOURCES" "$APP_DIR" "$RUNTIME_DIR"
 
 # 1. Copy core backend, frontend and sample assets
-for pyfile in server.py engine.py workbook.py exporter.py history.py class_brief.py distribution.py s3_store.py requirements.txt; do
+for pyfile in server.py engine.py workbook.py exporter.py history.py class_brief.py distribution.py item_analysis.py s3_store.py requirements.txt; do
   cp "$PROJECT_ROOT/$pyfile" "$APP_DIR/$pyfile"
 done
 cp -R "$PROJECT_ROOT/web" "$APP_DIR/web"
