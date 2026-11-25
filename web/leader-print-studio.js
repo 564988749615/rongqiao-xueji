@@ -3,7 +3,7 @@
 (() => {
   const e = v => Z.escape(v ?? '');
   const n = (v, d = 1) => Z.num(v, d);
-  const STORAGE_KEY = 'zhixu-print-studio-v1';
+  const STORAGE_KEY = 'zhixu-print-studio-v2';
 
   const signed = (v, d = 0, suffix = '') => {
     if (v === null || v === undefined || v === '') return '—';
@@ -18,7 +18,7 @@
     { id: 'M1', name: '班情核心 KPI 与谈话要点', desc: '双线人数/占比、较上次与首考增减、尖优含金量、均分及核心谈话要点' },
     { id: 'M2', name: '双线分学科诊断与同师对比', desc: '任课教师、各科均分、双线达标/集中与贡献差、同师另班对照' },
     { id: 'M3', name: '历次双线走势与人员流动', desc: '历次 20%/40% 双线走势图 + 较上次保尖率、守线率、掉线/突围流动' },
-    { id: 'M4', name: '学生较上次对比明细表', desc: 'A4 竖版大字号精简 5 列：序、姓名、本次名、名次进退、薄弱科，并自动标注前 20% / 前 40% 分界线' },
+    { id: 'M4', name: '学生较上次对比明细表', desc: 'A4 竖版超大字号 5 列：默认仅展示前 20% / 前 40% 学生（自动画双线标记），可切换全班' },
     { id: 'M5', name: '分层抓手与包干微名单', desc: '冲尖优临界、保达标临界、中优层流失预警、连续薄弱学科、导师制名单' },
     { id: 'M6', name: '历次单科名次段纵向对比', desc: '原模板1：总分与各科历次名次段趋势（可选领导版 50–800 或教师版 200–800）' },
     { id: 'M7', name: '有效分与薄弱科统计矩阵', desc: '原模板2：历次达标集中率 + 本次单科前 100–500 矩阵 + 薄弱学科统计' },
@@ -34,7 +34,7 @@
       desc: '适合行政会与约谈 · 按名次排序（M1+M2+M3+M5+M8）',
       enabled: ['M1', 'M2', 'M3', 'M5', 'M8'],
       order: ['M1', 'M2', 'M3', 'M5', 'M8', 'M4', 'M9', 'M10', 'M6', 'M7'],
-      m4Filter: 'all',
+      m4Filter: 'top_main',
       m4Sort: 'rank',
       m4PageBreak: true,
       m6Variant: 'leader',
@@ -47,10 +47,10 @@
     full: {
       id: 'full',
       name: '班情分析完整作战册（领导版）',
-      desc: '班情会全套材料 · 学生按名次排序（含 M4 全班对比）',
+      desc: '班情会全套材料 · 仅展示前 20%/40% 大字号对比（含 M4）',
       enabled: ['M1', 'M2', 'M3', 'M4', 'M5', 'M8'],
       order: ['M1', 'M2', 'M3', 'M4', 'M5', 'M8', 'M9', 'M10', 'M6', 'M7'],
-      m4Filter: 'all',
+      m4Filter: 'top_main',
       m4Sort: 'rank',
       m4PageBreak: true,
       m6Variant: 'leader',
@@ -100,7 +100,7 @@
       enabled: [...PRESETS.full.enabled],
       order: [...PRESETS.full.order],
       scope: 'current',
-      m4Filter: 'all',
+      m4Filter: 'top_main',
       m4Sort: 'rank',
       m4PageBreak: true,
       m6Variant: 'leader',
@@ -126,7 +126,7 @@
         enabled: enabled.length ? enabled : def.enabled,
         order,
         scope: raw.scope === 'all' ? 'all' : 'current',
-        m4Filter: ['all', 'big_drop', 'big_gain', 'big_shift', 'borderline', 'mentor'].includes(raw.m4Filter) ? raw.m4Filter : 'all',
+        m4Filter: ['top_main', 'all', 'big_drop', 'big_gain', 'big_shift', 'borderline', 'mentor'].includes(raw.m4Filter) ? raw.m4Filter : 'top_main',
         m4Sort: ['rank', 'surname', 'drop', 'gain'].includes(raw.m4Sort) ? raw.m4Sort : 'rank',
         m4PageBreak: raw.m4PageBreak !== false,
         m6Variant: raw.m6Variant === 'teacher' ? 'teacher' : 'leader',
@@ -147,6 +147,7 @@
 
   function filterComparisonRows(rows, filterMode = 'all', sortMode = 'rank') {
     const list = (rows || []).filter(r => {
+      if (filterMode === 'top_main') return r.tier === 'high' || r.tier === 'main';
       if (filterMode === 'big_gain') return r.is_big_gain;
       if (filterMode === 'big_drop') return r.is_big_drop;
       if (filterMode === 'big_shift') return r.is_big_gain || r.is_big_drop;
@@ -233,8 +234,10 @@
     const borderCount = allRows.filter(r => r.in_borderline_high || r.in_borderline_main).length;
     const mentorCount = allRows.filter(r => r.in_mentor).length;
 
+    const topMainCount = allRows.filter(r => r.tier === 'high' || r.tier === 'main').length;
     const filterTabs = [
       ['all', `全班学生 (${allRows.length})`],
+      ['top_main', `仅前20%/40% (${topMainCount})`],
       ['big_drop', `显著退步 (${comp.big_drop_count || 0})`],
       ['big_gain', `显著进步 (${comp.big_gain_count || 0})`],
       ['borderline', `双线临界 (${borderCount})`],
@@ -343,6 +346,7 @@
         extra = `<div class="studio-sub-opts">
           <label>人群
             <select data-studio-opt="m4Filter">
+              <option value="top_main"${cfg.m4Filter === 'top_main' ? ' selected' : ''}>仅前 20% / 前 40%（领导聚焦 · 超大字号）</option>
               <option value="all"${cfg.m4Filter === 'all' ? ' selected' : ''}>全班全部学生</option>
               <option value="big_shift"${cfg.m4Filter === 'big_shift' ? ' selected' : ''}>仅显著进退学生</option>
               <option value="big_drop"${cfg.m4Filter === 'big_drop' ? ' selected' : ''}>仅显著退步学生</option>
@@ -568,8 +572,10 @@
     const mShort = mLabel.replace(/^前/, '');
     const hCutoff = h.high?.cutoff;
     const mCutoff = h.main?.cutoff;
-    const filterNames = { all: '全班学生', big_shift: '显著进退学生', big_drop: '显著退步学生', big_gain: '显著进步学生', borderline: '双线临界生', mentor: '导师制名单' };
+    const filterNames = { top_main: `仅${hLabel}/${mLabel}`, all: '全班学生', big_shift: '显著进退学生', big_drop: '显著退步学生', big_gain: '显著进步学生', borderline: '双线临界生', mentor: '导师制名单' };
     const sortLabels = { rank: '按本次名次排序', surname: '按姓氏拼音排序', drop: '按退步优先排序', gain: '按进步优先排序' };
+    const totalClassCount = (comp.rows || []).length;
+    const omittedCount = cfg.m4Filter === 'top_main' ? Math.max(0, totalClassCount - rows.length) : 0;
 
     const isRankOrder = cfg.m4Sort === 'rank';
     const highCount = rows.filter(r => r.tier === 'high').length;
@@ -620,8 +626,11 @@
     });
 
     const trs = trParts.join('') || '<tr><td colspan="5" class="c">当前筛选范围内没有学生记录。</td></tr>';
-    const densityCls = rows.length > 56 ? ' is-compact' : rows.length <= 44 ? ' is-roomy' : '';
+    const densityCls = rows.length <= 28 ? ' is-xl' : rows.length <= 38 ? ' is-lg' : rows.length <= 48 ? ' is-md' : '';
     const pageBreakCls = cfg.m4PageBreak && !isFirstModule ? ' pm-break-before' : '';
+    const omitNote = omittedCount > 0
+      ? `<p class="pm-omit-note">注：本表仅展示${e(hLabel)}（${highCount}人）与${e(mLabel)}（累计${mainCumCount}人）学生，已略去${e(mLabel)}以下 ${omittedCount} 人以放大字号便于汇报阅读。</p>`
+      : '';
     return `<section class="pm-mod pm-m4${pageBreakCls}">
       <div class="pm-mod-head">
         <h3>学生较上次对比明细表（${e(filterNames[cfg.m4Filter] || '全班学生')} · ${rows.length} 人）</h3>
@@ -629,14 +638,15 @@
       </div>
       <table class="pm-table pm-comp-table${densityCls}">
         <thead><tr>
-          <th class="num" style="width:32px">序</th>
-          <th style="width:74px">姓名</th>
-          <th class="num" style="width:54px">本次名</th>
-          <th class="num" style="width:66px">名次进退</th>
+          <th class="num" style="width:38px">序</th>
+          <th style="width:92px">姓名</th>
+          <th class="num" style="width:68px">本次名</th>
+          <th class="num" style="width:82px">名次进退</th>
           <th>薄弱学科（本次分数/年级名次 · ★连弱）</th>
         </tr></thead>
         <tbody>${trs}</tbody>
       </table>
+      ${omitNote}
     </section>`;
   }
 
@@ -856,13 +866,22 @@
   .pm-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .pm-table .c { text-align: center; }
   .pm-table small { font-size: 8.2px; color: #6c627e; }
-  .pm-comp-table { font-size: 10px; line-height: 1.32; }
-  .pm-comp-table th, .pm-comp-table td { padding: 2.6px 6px; }
-  .pm-comp-table.is-roomy { font-size: 10.6px; line-height: 1.38; }
-  .pm-comp-table.is-roomy th, .pm-comp-table.is-roomy td { padding: 3.4px 6.5px; }
-  .pm-comp-table.is-compact { font-size: 9.4px; line-height: 1.24; }
-  .pm-comp-table.is-compact th, .pm-comp-table.is-compact td { padding: 2px 5.5px; }
+  .pm-comp-table { font-size: 10.2px; line-height: 1.32; }
+  .pm-comp-table th, .pm-comp-table td { padding: 2.5px 6px; }
+  .pm-comp-table.is-md { font-size: 11.4px; line-height: 1.36; }
+  .pm-comp-table.is-md th, .pm-comp-table.is-md td { padding: 3.4px 7.5px; }
+  .pm-comp-table.is-md .wk-item small { font-size: 10.4px; }
+  .pm-comp-table.is-md .pm-cut-badge { font-size: 10.2px; padding: 1.5px 10px; }
+  .pm-comp-table.is-lg { font-size: 12.6px; line-height: 1.42; }
+  .pm-comp-table.is-lg th, .pm-comp-table.is-lg td { padding: 4.4px 8.5px; }
+  .pm-comp-table.is-lg .wk-item small { font-size: 11.4px; }
+  .pm-comp-table.is-lg .pm-cut-badge { font-size: 11px; padding: 2px 12px; }
+  .pm-comp-table.is-xl { font-size: 13.8px; line-height: 1.48; }
+  .pm-comp-table.is-xl th, .pm-comp-table.is-xl td { padding: 5.5px 9.5px; }
+  .pm-comp-table.is-xl .wk-item small { font-size: 12.4px; }
+  .pm-comp-table.is-xl .pm-cut-badge { font-size: 11.6px; padding: 2.5px 14px; }
   .pm-comp-table .nm-cell { white-space: nowrap; }
+  .pm-omit-note { margin: 5px 0 0; font-size: 9.5px; color: #5f5672; }
   .pm-m10-table { font-size: 8.1px; line-height: 1.18; table-layout: auto; }
   .pm-m10-table th, .pm-m10-table td { padding: 1.8px 3.5px; }
   .pm-m10-table.is-ultra-dense { font-size: 7.5px; line-height: 1.14; }
