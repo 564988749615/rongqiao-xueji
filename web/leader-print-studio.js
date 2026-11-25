@@ -561,7 +561,7 @@
     </section>`;
   }
 
-  function modM4HTML(brief, cfg, isFirstModule) {
+  function modM4HTML(brief, cfg, isFirstModule, hasNextModule = false) {
     const comp = brief.student_comparison || {};
     const rows = filterComparisonRows(comp.rows || [], cfg.m4Filter, cfg.m4Sort);
     const base = comp.compare_exam;
@@ -626,22 +626,25 @@
     });
 
     const trs = trParts.join('') || '<tr><td colspan="5" class="c">当前筛选范围内没有学生记录。</td></tr>';
-    const densityCls = rows.length <= 28 ? ' is-xl' : rows.length <= 38 ? ' is-lg' : rows.length <= 48 ? ' is-md' : '';
-    const pageBreakCls = cfg.m4PageBreak && !isFirstModule ? ' pm-break-before' : '';
+    const totalRows = Math.max(1, trParts.length + 1);
+    const estRowH = (isFirstModule ? 900 : 960) / totalRows;
+    const initFs = Math.max(8.0, Math.min(14.5, Math.floor((estRowH * 0.48) * 10) / 10));
+    const initPy = Math.max(1.0, Math.min(6.0, Math.floor(((estRowH - initFs * 1.28 - 1.2) / 2) * 10) / 10));
+    const pageBreakCls = (cfg.m4PageBreak && !isFirstModule ? ' pm-break-before' : '') + (cfg.m4PageBreak && hasNextModule ? ' pm-break-after' : '');
     const omitNote = omittedCount > 0
       ? `<p class="pm-omit-note">注：本表仅展示${e(hLabel)}（${highCount}人）与${e(mLabel)}（累计${mainCumCount}人）学生，已略去${e(mLabel)}以下 ${omittedCount} 人以放大字号便于汇报阅读。</p>`
       : '';
-    return `<section class="pm-mod pm-m4${pageBreakCls}">
+    return `<section class="pm-mod pm-m4${pageBreakCls}" data-m4-first="${isFirstModule ? '1' : '0'}" style="--m4-fs:${initFs}px;--m4-py:${initPy}px;--m4-sm:${Math.max(7.4, Number((initFs - 1.2).toFixed(1)))}px;--m4-cut:${Math.max(8.2, Number((initFs - 1.4).toFixed(1)))}px">
       <div class="pm-mod-head">
         <h3>学生较上次对比明细表（${e(filterNames[cfg.m4Filter] || '全班学生')} · ${rows.length} 人）</h3>
         <span>${e(hLabel)} ${highCount} 人 · ${e(mLabel)} ${mainCumCount} 人 · ${e(sortLabels[cfg.m4Sort] || '按本次名次排序')} · 对比：${base ? `${e(base.name)}` : '无'} · ★连弱</span>
       </div>
-      <table class="pm-table pm-comp-table${densityCls}">
+      <table class="pm-table pm-comp-table">
         <thead><tr>
-          <th class="num" style="width:38px">序</th>
-          <th style="width:92px">姓名</th>
-          <th class="num" style="width:68px">本次名</th>
-          <th class="num" style="width:82px">名次进退</th>
+          <th class="num" style="width:36px">序</th>
+          <th style="width:88px">姓名</th>
+          <th class="num" style="width:64px">本次名</th>
+          <th class="num" style="width:78px">名次进退</th>
           <th>薄弱学科（本次分数/年级名次 · ★连弱）</th>
         </tr></thead>
         <tbody>${trs}</tbody>
@@ -787,7 +790,7 @@
       if (id === 'M1') return modM1HTML(brief);
       if (id === 'M2') return modM2HTML(brief);
       if (id === 'M3') return modM3HTML(brief);
-      if (id === 'M4') return modM4HTML(brief, cfg, idx === 0);
+      if (id === 'M4') return modM4HTML(brief, cfg, idx === 0, idx < activeIds.length - 1);
       if (id === 'M5') return modM5HTML(brief);
       if (id === 'M6') return modM6HTML(brief, cfg);
       if (id === 'M7') return modM7HTML(brief, cfg);
@@ -845,6 +848,7 @@
   .pm-mod { margin-bottom: 10px; }
   .pm-avoid { break-inside: avoid; page-break-inside: avoid; }
   .pm-break-before { break-before: page; page-break-before: always; }
+  .pm-break-after { break-after: page; page-break-after: always; }
   .pm-mod-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 5px; border-left: 3px solid #6f4eb8; padding-left: 7px; }
   .pm-mod-head h3 { margin: 0; font-size: 11.5px; color: #36255c; }
   .pm-mod-head span { font-size: 8.8px; color: #6d6380; }
@@ -866,22 +870,10 @@
   .pm-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .pm-table .c { text-align: center; }
   .pm-table small { font-size: 8.2px; color: #6c627e; }
-  .pm-comp-table { font-size: 10.2px; line-height: 1.32; }
-  .pm-comp-table th, .pm-comp-table td { padding: 2.5px 6px; }
-  .pm-comp-table.is-md { font-size: 11.4px; line-height: 1.36; }
-  .pm-comp-table.is-md th, .pm-comp-table.is-md td { padding: 3.4px 7.5px; }
-  .pm-comp-table.is-md .wk-item small { font-size: 10.4px; }
-  .pm-comp-table.is-md .pm-cut-badge { font-size: 10.2px; padding: 1.5px 10px; }
-  .pm-comp-table.is-lg { font-size: 12.6px; line-height: 1.42; }
-  .pm-comp-table.is-lg th, .pm-comp-table.is-lg td { padding: 4.4px 8.5px; }
-  .pm-comp-table.is-lg .wk-item small { font-size: 11.4px; }
-  .pm-comp-table.is-lg .pm-cut-badge { font-size: 11px; padding: 2px 12px; }
-  .pm-comp-table.is-xl { font-size: 13.8px; line-height: 1.48; }
-  .pm-comp-table.is-xl th, .pm-comp-table.is-xl td { padding: 5.5px 9.5px; }
-  .pm-comp-table.is-xl .wk-item small { font-size: 12.4px; }
-  .pm-comp-table.is-xl .pm-cut-badge { font-size: 11.6px; padding: 2.5px 14px; }
+  .pm-comp-table { font-size: var(--m4-fs, 12px); line-height: 1.28; }
+  .pm-comp-table th, .pm-comp-table td { padding: var(--m4-py, 3.5px) 7px; }
   .pm-comp-table .nm-cell { white-space: nowrap; }
-  .pm-omit-note { margin: 5px 0 0; font-size: 9.5px; color: #5f5672; }
+  .pm-omit-note { margin: 4px 0 0; font-size: 9px; color: #5f5672; }
   .pm-m10-table { font-size: 8.1px; line-height: 1.18; table-layout: auto; }
   .pm-m10-table th, .pm-m10-table td { padding: 1.8px 3.5px; }
   .pm-m10-table.is-ultra-dense { font-size: 7.5px; line-height: 1.14; }
@@ -892,7 +884,7 @@
   .pm-m10-table tr.row-good { background: #f2faf5; }
   .pm-comp-table .wk-cell { font-variant-numeric: tabular-nums; }
   .pm-comp-table .wk-item { white-space: nowrap; }
-  .pm-comp-table .wk-item small { font-size: 9.1px; color: #524867; font-weight: 400; }
+  .pm-comp-table .wk-item small { font-size: var(--m4-sm, 10.5px); color: #524867; font-weight: 400; }
   .pm-comp-table .wk-sep { color: #9c92b0; }
   .pm-comp-table tbody tr:nth-child(even) { background: #faf9fc; }
   .pm-comp-table tr.row-alert { background: #fff4f4; }
@@ -901,7 +893,7 @@
   .pm-comp-table tr.pm-cut-row.is-high td { border-top: 2px solid #266b4e; border-bottom: 1px solid #d9d1e8; background: #eef7f2 !important; }
   .pm-comp-table tr.pm-cut-row.is-main td { border-top: 2px dashed #5d3fa8; border-bottom: 1px solid #d9d1e8; background: #f4effb !important; }
   .pm-cut-line { display: flex; align-items: center; justify-content: center; gap: 6px; }
-  .pm-cut-badge { display: inline-block; font-size: 9px; font-weight: 700; letter-spacing: 0.02em; padding: 0.5px 8px; border-radius: 99px; }
+  .pm-cut-badge { display: inline-block; font-size: var(--m4-cut, 10px); font-weight: 700; letter-spacing: 0.02em; padding: 1px 10px; border-radius: 99px; }
   .pm-cut-badge.is-high { color: #19563d; background: #ddf0e6; border: 1px solid #7ab89d; }
   .pm-cut-badge.is-main { color: #432882; background: #e8dff8; border: 1px solid #9f84d8; }
   .pm-tier-chip { display: inline-block; font-size: 8px; font-weight: 650; padding: 0 3.5px; border-radius: 3px; vertical-align: middle; margin-left: 3px; }
@@ -963,6 +955,61 @@
     </div>
   </div>
   <div class="print-canvas">${list.map(b => renderClassPacket(b, cfg)).join('')}</div>
+  <script>
+    (function fitM4OnePage() {
+      const mmProbe = document.createElement('div');
+      mmProbe.style.cssText = 'position:fixed;visibility:hidden;height:273mm;width:1px;';
+      document.body.appendChild(mmProbe);
+      const pageMaxPx = mmProbe.getBoundingClientRect().height || 1030;
+      mmProbe.remove();
+
+      const apply = (sec, fs, py) => {
+        sec.style.setProperty('--m4-fs', fs.toFixed(2) + 'px');
+        sec.style.setProperty('--m4-py', py.toFixed(2) + 'px');
+        sec.style.setProperty('--m4-sm', Math.max(6.8, fs - 1.2).toFixed(2) + 'px');
+        sec.style.setProperty('--m4-cut', Math.max(7.6, fs - 1.4).toFixed(2) + 'px');
+      };
+
+      const run = () => {
+        document.querySelectorAll('.pm-m4').forEach(sec => {
+          const packet = sec.closest('.pm-class-packet');
+          const mast = sec.dataset.m4First === '1' ? packet?.querySelector('.pm-masthead') : null;
+          const mastH = mast ? (mast.getBoundingClientRect().height + 12) : 0;
+          const limit = Math.max(600, pageMaxPx - mastH);
+          let fs = parseFloat(sec.style.getPropertyValue('--m4-fs')) || 12;
+          let py = parseFloat(sec.style.getPropertyValue('--m4-py')) || 3.5;
+
+          // Grow gently if plenty of room so smaller classes get maximum legible font
+          let guard = 0;
+          while (sec.getBoundingClientRect().height < limit * 0.90 && fs < 14.8 && guard < 24) {
+            const nextFs = Math.min(14.8, fs + 0.35);
+            const nextPy = Math.min(6.8, py + 0.22);
+            apply(sec, nextFs, nextPy);
+            if (sec.getBoundingClientRect().height > limit) {
+              apply(sec, fs, py);
+              break;
+            }
+            fs = nextFs;
+            py = nextPy;
+            guard++;
+          }
+
+          // Shrink strictly until guaranteed <= 1 A4 page even for 55+ students
+          guard = 0;
+          while (sec.getBoundingClientRect().height > limit && (fs > 7.2 || py > 0.6) && guard < 45) {
+            if (py > 1.2) py = Math.max(0.6, py - 0.35);
+            else fs = Math.max(7.2, fs - 0.3);
+            apply(sec, fs, py);
+            guard++;
+          }
+        });
+      };
+
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run);
+      else run();
+      window.addEventListener('beforeprint', run);
+    })();
+  </script>
 </body></html>`;
 
     const win = window.open('', '_blank', 'width=980,height=880');
