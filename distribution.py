@@ -138,6 +138,7 @@ def build_student_cards(
         exam_stats_cache.append((info, ana, participants, g_mean, g_std, by_id))
 
     sub_stats_map = {st['subject']: st for st in target_analysis.get('subject_stats') or []}
+    class_stats_map = {cs['class']: cs for cs in target_analysis.get('class_stats') or []}
     full_marks = (target_analysis.get('rules') or {}).get('full_marks') or {}
     total_subjects = (target_analysis.get('rules') or {}).get('total_subjects') or target_analysis.get('subjects') or []
     full_total = (
@@ -165,6 +166,8 @@ def build_student_cards(
     for s in selected_students:
         pr = calc_pr(s.get('rank'), target_participants)
         t_score = calc_t_score(s.get('total'), target_mean, target_std)
+        cls_stat = class_stats_map.get(s['class']) or {}
+        cls_sub_stats = cls_stat.get('subjects') or {}
 
         sub_items = []
         for sub in target_analysis['subjects']:
@@ -173,8 +176,10 @@ def build_student_cards(
             st = sub_stats_map.get(sub) or {}
             sub_cnt = int(st.get('count') or 0)
             sub_mean = st.get('mean')
+            cls_sub_mean = (cls_sub_stats.get(sub) or {}).get('mean')
             sub_pr = calc_pr(s_rank, sub_cnt) if s_rank is not None and sub_cnt > 0 else None
             mean_diff = round(float(score) - float(sub_mean), 1) if (score is not None and sub_mean is not None) else None
+            class_mean_diff = round(float(score) - float(cls_sub_mean), 1) if (score is not None and cls_sub_mean is not None) else None
             sub_items.append({
                 'subject': sub,
                 'score': score,
@@ -184,6 +189,8 @@ def build_student_cards(
                 'pr': sub_pr,
                 'grade_mean': sub_mean,
                 'mean_diff': mean_diff,
+                'class_mean': cls_sub_mean,
+                'class_mean_diff': class_mean_diff,
             })
 
         history = []
@@ -221,6 +228,9 @@ def build_student_cards(
             'advice': advice,
         })
 
+    data_version = int((target_analysis.get('metadata') or {}).get('data_version') or target_info.get('data_version') or 1)
+    edit_count = int((target_analysis.get('metadata') or {}).get('edit_count') or target_info.get('edit_count') or 0)
+
     return {
         'meta': {
             'exam_id': target_info['id'],
@@ -230,6 +240,8 @@ def build_student_cards(
             'class': class_name,
             'card_count': len(cards),
             'subjects': target_analysis['subjects'],
+            'data_version': data_version,
+            'edit_count': edit_count,
         },
         'cards': cards,
     }
@@ -759,3 +771,309 @@ def build_class_abc_zip(
 
     safe_prefix = re.sub(r'[\\/:*?"<>|]', '_', f"{meta.get('grade', '')}_{meta.get('name', '')}").strip('_') or '成绩'
     return f'{safe_prefix}_各班{mode_tag}(按姓氏分班包).zip', buf.getvalue()
+
+
+def _svg_radar_standalone(subjects: list[dict]) -> str:
+    valid = [s for s in (subjects or []) if s.get('pr') is not None]
+    if len(valid) < 3:
+        return '<div class="sc-chart-empty">有效学科不足 3 科，暂不绘制雷达图</div>'
+    size, cx, cy, r_max = 196, 98.0, 98.0, 66.0
+    count = len(valid)
+
+    def polar(idx: int, ratio: float) -> tuple[float, float]:
+        ang = -math.pi / 2 + (idx * 2 * math.pi) / count
+        return cx + math.cos(ang) * r_max * ratio, cy + math.sin(ang) * r_max * ratio
+
+    rings = []
+    for ratio in (0.25, 0.5, 0.75, 1.0):
+        pts = ' '.join(f'{x:.1f},{y:.1f}' for x, y in (polar(i, ratio) for i in range(count)))
+        sw = '1.1' if ratio == 1.0 else '0.75'
+        dash = '3 2' if ratio == 0.5 else 'none'
+        rings.append(f'<polygon points="{pts}" fill="none" stroke="#d8d1e6" stroke-width="{sw}" stroke-dasharray="{dash}"/>')
+
+    spokes = []
+    for i, s in enumerate(valid):
+        x2, y2 = polar(i, 1.0)
+        lx, ly = polar(i, 1.24)
+        anchor = 'middle' if abs(lx - cx) < 8 else ('start' if lx > cx else 'end')
+        spokes.append(
+            f'<line x1="{cx:.1f}" y1="{cy:.1f}" x2="{x2:.1f}" y2="{y2:.1f}" stroke="#e3ddef" stroke-width="0.8"/>'
+            f'<text x="{lx:.1f}" y="{ly + 3.5:.1f}" text-anchor="{anchor}" font-size="9.5" fill="#3b3250" font-weight="600">{html.escape(str(s["subject"]))}</text>'
+        )
+
+    data_pts = [polar(i, max(0.08, min(1.0, float(s['pr']) / 100.0))) for i, s in enumerate(valid)]
+    poly_pts = ' '.join(f'{x:.1f},{y:.1f}' for x, y in data_pts)
+    poly = f'<polygon points="{poly_pts}" fill="rgba(111,78,184,0.20)" stroke="#6f4eb8" stroke-width="1.8"/>'
+    dots = ''.join(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="2.6" fill="#6f4eb8"/>' for x, y in data_pts)
+    return f'<svg class="sc-radar" viewBox="0 0 {size} {size}" role="img" aria-label="学科均衡雷达图">{"".join(rings)}{"".join(spokes)}{poly}{dots}</svg>'
+
+
+def _svg_history_standalone(history: list[dict]) -> str:
+    valid = [h for h in (history or []) if h.get('pr') is not None]
+    if len(valid) < 2:
+        return '<div class="sc-chart-empty">导入同年级多场考试后，此处自动绘制个人成长曲线</div>'
+    w, h, pl, pr, top, bot = 228.0, 112.0, 28.0, 16.0, 20.0, 84.0
+    vals = [float(x['pr']) for x in valid]
+    lo = max(0, int(math.floor((min(vals) - 10) / 10.0) * 10))
+    hi = min(100, int(math.ceil((max(vals) + 10) / 10.0) * 10))
+    span = max(hi - lo, 20)
+
+    def x_for(i: int) -> float:
+        return pl + (i * (w - pl - pr)) / (len(valid) - 1)
+
+    def y_for(v: float) -> float:
+        return bot - ((v - lo) / span) * (bot - top)
+
+    pts = [(x_for(i), y_for(v)) for i, v in enumerate(vals)]
+    ticks = []
+    for v in (lo, round((lo + hi) / 2), hi):
+        y = y_for(v)
+        ticks.append(
+            f'<line x1="{pl:.1f}" y1="{y:.1f}" x2="{w - pr:.1f}" y2="{y:.1f}" stroke="#e6e1f0" stroke-width="0.8"/>'
+            f'<text x="{pl - 4:.1f}" y="{y + 3:.1f}" text-anchor="end" font-size="8.5" fill="#776d8c">{v}</text>'
+        )
+    labels = []
+    for i, (x, y) in enumerate(pts):
+        lbl = str(valid[i].get('date') or valid[i].get('exam_name') or '')[-5:]
+        labels.append(
+            f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3" fill="#fff" stroke="#6f4eb8" stroke-width="1.8"/>'
+            f'<text x="{x:.1f}" y="{y - 6:.1f}" text-anchor="middle" font-size="8.5" fill="#4f358c" font-weight="650">{vals[i]:.0f}</text>'
+            f'<text x="{x:.1f}" y="{h - 8:.1f}" text-anchor="middle" font-size="8" fill="#6f6680">{html.escape(lbl)}</text>'
+        )
+    poly_pts = ' '.join(f'{x:.1f},{y:.1f}' for x, y in pts)
+    return (
+        f'<svg class="sc-spark" viewBox="0 0 {int(w)} {int(h)}" role="img" aria-label="个人年级百分位成长走势">'
+        f'{"".join(ticks)}<polyline fill="none" stroke="#6f4eb8" stroke-width="2" points="{poly_pts}"/>{"".join(labels)}</svg>'
+    )
+
+
+def _render_standalone_student_card_html(
+    card: dict,
+    meta: dict,
+    *,
+    hide_rank: bool = True,
+    hide_score: bool = False,
+) -> str:
+    """Render a self-contained single-student A4 HTML report with ZERO other-student data."""
+    esc = html.escape
+    ver = int(meta.get('data_version') or 1)
+    ec = int(meta.get('edit_count') or 0)
+    ver_tag = f'数据版本 v{ver} · 含 {ec} 处更正' if ec > 0 else f'数据版本 v{ver} · 原始导入'
+    mode_tag = '仅等级与相对强弱（零分零名次）' if hide_score else ('仅含本人成绩（已隐藏名次）' if hide_rank else '仅含本人成绩（隐私保护版）')
+
+    sub_rows = []
+    for s in card.get('subjects') or []:
+        pr_val = max(0.0, min(100.0, float(s['pr']))) if s.get('pr') is not None else None
+        lvl = s['level'] if s.get('level') and s['level'] != '—' else (s.get('grade') or '—')
+        pr_cell = (
+            '—'
+            if pr_val is None
+            else f'<span class="pr-bar"><i style="width:{pr_val:.1f}%"></i></span><span class="pr-num">{pr_val:.0f}%</span>'
+        )
+        if hide_score:
+            pos_label = '—'
+            pos_cls = ''
+            if pr_val is not None:
+                if pr_val >= 80:
+                    pos_label, pos_cls = '明显优势', 'pos'
+                elif pr_val >= 55:
+                    pos_label, pos_cls = '稳健良好', 'pos'
+                elif pr_val >= 35:
+                    pos_label, pos_cls = '中段可提', ''
+                else:
+                    pos_label, pos_cls = '优先夯基', 'neg'
+            sub_rows.append(
+                f'<tr><td class="sub-name">{esc(str(s["subject"]))}</td>'
+                f'<td class="center"><span class="lvl-pill">{esc(str(lvl))}</span></td>'
+                f'<td class="pr-cell">{pr_cell}</td>'
+                f'<td class="center {pos_cls}">{pos_label}</td></tr>'
+            )
+        else:
+            sc_html = '缺' if s.get('score') is None else f'<b>{float(s["score"]):.1f}</b>'
+            if s.get('score') is not None and s.get('full_mark'):
+                sc_html += f'<small>/{float(s["full_mark"]):.0f}</small>'
+            diff = s.get('mean_diff')
+            diff_txt = '—' if diff is None else f'{diff:+.1f}'
+            diff_cls = '' if diff is None else ('pos' if diff >= 0 else 'neg')
+            sub_rows.append(
+                f'<tr><td class="sub-name">{esc(str(s["subject"]))}</td>'
+                f'<td class="num">{sc_html}</td>'
+                f'<td class="center"><span class="lvl-pill">{esc(str(lvl))}</span></td>'
+                f'<td class="pr-cell">{pr_cell}</td>'
+                f'<td class="num {diff_cls}">{diff_txt}</td></tr>'
+            )
+
+    adv = card.get('advice') or {}
+    total_lvl = card['total_level'] if card.get('total_level') and card['total_level'] != '—' else (card.get('total_grade') or '—')
+    pr_text = '—' if card.get('pr') is None else f'超越 {float(card["pr"]):.1f}%'
+    if hide_score:
+        kpi_first = f'<div class="sc-kpi"><small>学业等级</small><strong>{esc(str(total_lvl))}</strong></div>'
+        kpi_second = f'<div class="sc-kpi"><small>参评学科</small><strong>{len(card.get("subjects") or [])}<em>科</em></strong></div>'
+    else:
+        tot_val = '—' if card.get('total') is None else f'{float(card["total"]):.1f}'
+        tot_sfx = f'<em>/{float(card["full_total"]):.0f}</em>' if card.get('full_total') else '<em>分</em>'
+        kpi_first = f'<div class="sc-kpi"><small>总分</small><strong>{tot_val}{tot_sfx}</strong></div>'
+        kpi_second = f'<div class="sc-kpi"><small>学业等级</small><strong>{esc(str(total_lvl))}</strong></div>'
+
+    if hide_rank or hide_score:
+        t_txt = '—' if card.get('t_score') is None else f'{float(card["t_score"]):.1f}'
+        kpi_fourth = f'<div class="sc-kpi"><small>标准分（T分）</small><strong>{t_txt}</strong></div>'
+    else:
+        rk = '—' if card.get('rank') is None else f'{int(card["rank"])} / {int(card.get("participants") or 0)}'
+        kpi_fourth = f'<div class="sc-kpi"><small>年级参考位次</small><strong>{rk}</strong></div>'
+
+    thead = (
+        '<tr><th>学科</th><th class="center">等级</th><th>学科年级百分位</th><th class="center">强弱定位</th></tr>'
+        if hide_score
+        else '<tr><th>学科</th><th class="num">得分</th><th class="center">等级</th><th>学科年级百分位</th><th class="num">较年级均分</th></tr>'
+    )
+
+    title_text = f'{meta.get("grade", "")} {card.get("class", "")}班 · {card.get("name", "")} · 个人学业诊断卡'
+    return f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{esc(title_text)}</title>
+<style>
+  @page {{ size: A4 portrait; margin: 10mm 11mm; }}
+  * {{ box-sizing: border-box; }}
+  body {{ margin: 0; font-family: "PingFang SC","Microsoft YaHei","Hiragino Sans GB",sans-serif; color: #221c2e; background: #edeaf4; font-size: 12px; line-height: 1.5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
+  .bar {{ position: sticky; top: 0; z-index: 10; display: flex; justify-content: space-between; align-items: center; padding: 10px 18px; background: #2f3068; color: #fff; font-size: 13px; }}
+  .bar button {{ background: #6f4eb8; color: #fff; border: 0; border-radius: 6px; padding: 6px 14px; font-weight: 600; cursor: pointer; }}
+  .wrap {{ padding: 18px 12px 32px; display: flex; justify-content: center; }}
+  .card {{ width: 190mm; max-width: 100%; min-height: 268mm; background: #fff; border: 1px solid #d5cee6; border-radius: 8px; padding: 16px 18px; box-shadow: 0 8px 28px rgba(34,24,60,.14); display: flex; flex-direction: column; gap: 12px; }}
+  .sc-header {{ display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; border-bottom: 2px solid #6f4eb8; padding-bottom: 8px; flex-wrap: wrap; }}
+  .sc-school {{ font-size: 10px; color: #6f4eb8; font-weight: 650; letter-spacing: .04em; }}
+  .sc-header h1 {{ margin: 2px 0 0; font-size: 20px; color: #1e182a; }}
+  .sc-cls {{ font-size: 12px; font-weight: 500; color: #5b5170; margin-left: 8px; }}
+  .sc-exam-meta {{ text-align: right; }}
+  .sc-exam-meta strong {{ display: block; font-size: 13px; color: #2b233a; }}
+  .sc-exam-meta span {{ font-size: 10px; color: #716784; }}
+  .sc-kpis {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }}
+  .sc-kpi {{ border: 1px solid #dfd8ed; border-radius: 6px; padding: 7px 10px; background: #faf8fd; }}
+  .sc-kpi.accent {{ background: #f2ecfa; border-color: #c5b4e3; }}
+  .sc-kpi small {{ display: block; font-size: 10px; color: #6a607c; }}
+  .sc-kpi strong {{ display: block; font-size: 16px; color: #2a213d; font-variant-numeric: tabular-nums; margin-top: 2px; }}
+  .sc-kpi strong em {{ font-style: normal; font-size: 10.5px; font-weight: 500; color: #6f6482; margin-left: 2px; }}
+  .sc-body {{ display: grid; grid-template-columns: 1.3fr 0.95fr; gap: 12px; align-items: start; flex: 1; }}
+  table {{ width: 100%; border-collapse: collapse; font-size: 11.5px; }}
+  th, td {{ border: 1px solid #dfd9eb; padding: 6px 8px; text-align: left; }}
+  th {{ background: #f3eefb; color: #3c2b63; font-weight: 650; }}
+  .num {{ text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }}
+  .center {{ text-align: center; }}
+  .sub-name {{ font-weight: 600; color: #2a223b; }}
+  td small {{ color: #7c7290; font-size: 10px; }}
+  .lvl-pill {{ display: inline-block; padding: 1px 6px; border-radius: 3px; background: #f0eaf9; color: #4f358c; font-weight: 650; font-size: 10.5px; }}
+  .pr-cell {{ white-space: nowrap; }}
+  .pr-bar {{ display: inline-block; width: 48px; height: 6px; background: #ebe6f4; border-radius: 3px; vertical-align: middle; overflow: hidden; margin-right: 5px; }}
+  .pr-bar i {{ display: block; height: 100%; background: #6f4eb8; }}
+  .pr-num {{ font-size: 10px; color: #544969; font-variant-numeric: tabular-nums; }}
+  .pos {{ color: #24684c; font-weight: 600; }}
+  .neg {{ color: #a83c3c; font-weight: 600; }}
+  .sc-visual-col {{ display: flex; flex-direction: column; gap: 8px; }}
+  .sc-chart-box {{ border: 1px solid #e4def0; border-radius: 6px; padding: 8px 10px; background: #fcfbfe; text-align: center; }}
+  .sc-chart-title {{ display: flex; justify-content: space-between; align-items: baseline; font-size: 10.5px; font-weight: 650; color: #3f2f63; margin-bottom: 4px; text-align: left; }}
+  .sc-chart-title span {{ font-size: 9px; font-weight: 400; color: #7e7491; }}
+  .sc-radar {{ width: 100%; max-width: 205px; height: auto; display: block; margin: 0 auto; }}
+  .sc-spark {{ width: 100%; max-width: 230px; height: auto; display: block; margin: 0 auto; }}
+  .sc-chart-empty {{ padding: 16px 8px; color: #847a96; font-size: 10px; }}
+  .sc-advice {{ border-left: 3px solid #6f4eb8; background: #faf8fd; border-radius: 0 6px 6px 0; padding: 10px 12px; font-size: 11.5px; }}
+  .sc-advice p {{ margin: 3px 0; }}
+  .sc-sign {{ display: flex; justify-content: space-between; align-items: flex-end; border-top: 1px dashed #d1c8e2; padding-top: 10px; min-height: 54px; font-size: 11px; color: #5c526e; }}
+  .sc-foot {{ display: flex; justify-content: space-between; font-size: 9.5px; color: #7c7290; border-top: 1px solid #ece7f4; padding-top: 6px; }}
+  @media (max-width: 720px) {{
+    .sc-kpis {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+    .sc-body {{ grid-template-columns: 1fr; }}
+  }}
+  @media print {{
+    body {{ background: #fff; }}
+    .bar {{ display: none; }}
+    .wrap {{ padding: 0; }}
+    .card {{ width: auto; min-height: 0; border: 0; box-shadow: none; padding: 0; }}
+  }}
+</style></head><body>
+  <div class="bar">
+    <span>{esc(title_text)}</span>
+    <button type="button" onclick="window.print()">打印 / 存为 PDF</button>
+  </div>
+  <div class="wrap">
+    <article class="card">
+      <header class="sc-header">
+        <div>
+          <div class="sc-school">融侨学迹 · 学生个人学业诊断成长卡</div>
+          <h1>{esc(str(card.get("name", "")))} <span class="sc-cls">{esc(str(meta.get("grade", "")))} {esc(str(card.get("class", "")))}班</span></h1>
+        </div>
+        <div class="sc-exam-meta">
+          <strong>{esc(str(meta.get("exam_name", "")))}</strong>
+          <span>{esc(str(meta.get("date", "")))} · {mode_tag}</span>
+        </div>
+      </header>
+      <div class="sc-kpis">
+        {kpi_first}
+        {kpi_second}
+        <div class="sc-kpi accent"><small>年级百分位（PR）</small><strong>{pr_text}</strong></div>
+        {kpi_fourth}
+      </div>
+      <div class="sc-body">
+        <div><table><thead>{thead}</thead><tbody>{"".join(sub_rows)}</tbody></table></div>
+        <div class="sc-visual-col">
+          <div class="sc-chart-box"><div class="sc-chart-title">学科均衡雷达图<span>按学科年级百分位绘制</span></div>{_svg_radar_standalone(card.get("subjects") or [])}</div>
+          <div class="sc-chart-box"><div class="sc-chart-title">历次成长曲线<span>年级百分位（消除试卷难易波动）</span></div>{_svg_history_standalone(card.get("history") or [])}</div>
+        </div>
+      </div>
+      <div class="sc-advice">
+        <p><b>优势肯定：</b>{esc(str(adv.get("strength_text") or ""))}</p>
+        <p><b>提分抓手：</b>{esc(str(adv.get("focus_text") or ""))}{(" " + esc(str(adv.get("trend_text")))) if adv.get("trend_text") else ""}</p>
+      </div>
+      <footer class="sc-sign">
+        <span>学生反思 / 近期目标：</span>
+        <span>家长签字：<u>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u> &nbsp;日期：<u>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u></span>
+      </footer>
+      <div class="sc-foot"><span>本文件仅含该生个人学业诊断，不含任何其他同学信息，离线可随时打开</span><span>{esc(ver_tag)} · 融侨学迹</span></div>
+    </article>
+  </div>
+</body></html>'''
+
+
+def build_student_cards_zip(
+    grade_exams: list[tuple[dict, dict, dict]],
+    exam_id: str,
+    *,
+    class_name: str = '',
+    hide_rank: bool = True,
+    hide_score: bool = False,
+) -> tuple[str, bytes]:
+    """Export one isolated offline HTML diagnostic card per student inside a ZIP bundle."""
+    payload = build_student_cards(grade_exams, exam_id, class_name=class_name)
+    meta = payload['meta']
+    cards = sorted(payload['cards'], key=lambda c: (str(c.get('class') or ''), surname_sort_key(c.get('name') or '')))
+
+    buf = io.BytesIO()
+    used_paths: set[str] = set()
+    with zipfile.ZipFile(buf, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
+        mode_desc = '纯等级与相对强弱（隐藏分数与名次）' if hide_score else ('隐藏具体名次（含得分、等级与百分位）' if hide_rank else '含年级参考位次')
+        readme = (
+            f"融侨学迹 · 学生个人学业诊断卡（一人一档独立 HTML 包）\n"
+            f"考试：{meta.get('grade', '')} · {meta.get('exam_name', '')}（{meta.get('date', '')}）\n"
+            f"范围：{class_name + '班' if class_name else '全年级'} · 共 {len(cards)} 名学生\n"
+            f"脱敏模式：{mode_desc}\n"
+            f"数据版本：v{meta.get('data_version', 1)}"
+            + (f"（含 {meta.get('edit_count', 0)} 处更正）\n\n" if meta.get('edit_count') else "（原始导入）\n\n")
+            + "使用说明：\n"
+            + "1. 每位学生对应一份独立 HTML 文件，不含其他任何同学的数据，可直接点对点微信发给家长或在电脑/手机浏览器打开。\n"
+            + "2. 所有图表均已内嵌为矢量 SVG，完全离线可看、支持直接打印或存为 A4 PDF。\n"
+        )
+        zf.writestr('使用说明.txt', readme.encode('utf-8'))
+        for card in cards:
+            cls = str(card.get('class') or '未分班')
+            safe_name = re.sub(r'[\\/:*?"<>|]', '_', str(card.get('name') or '学生')).strip('_') or '学生'
+            base_path = f'{cls}班/{cls}班_{safe_name}_个人学业诊断卡.html'
+            arc_path = base_path
+            idx = 2
+            while arc_path in used_paths:
+                arc_path = f'{cls}班/{cls}班_{safe_name}_{idx}_个人学业诊断卡.html'
+                idx += 1
+            used_paths.add(arc_path)
+            doc_html = _render_standalone_student_card_html(card, meta, hide_rank=hide_rank, hide_score=hide_score)
+            zf.writestr(arc_path, doc_html.encode('utf-8'))
+
+    safe_prefix = re.sub(r'[\\/:*?"<>|]', '_', f"{meta.get('grade', '')}_{meta.get('name', '')}").strip('_') or '成绩'
+    scope_tag = f'{class_name}班' if class_name else '全年级'
+    return f'{safe_prefix}_{scope_tag}_家长版个人诊断卡(一人一档).zip', buf.getvalue()

@@ -33,6 +33,7 @@ from distribution import (
     build_class_abc_zip,
     build_class_packages_zip,
     build_student_cards,
+    build_student_cards_zip,
 )
 from engine import (
     PORTABLE_RULE_KEYS,
@@ -1209,6 +1210,28 @@ class Handler(BaseHTTPRequestHandler):
                 mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                 filename=filename,
             )
+        match = re.fullmatch(r'/api/exams/([^/]+)/student-cards\.zip', path)
+        if match:
+            exam_id = match.group(1)
+            target_row = get_exam(exam_id)
+            target_info = exam_summary(target_row)
+            grade = target_info['grade']
+            class_name = (query.get('class') or [''])[0].strip()
+            hide_rank = (query.get('hide_rank') or ['1'])[0] not in ('0', 'false', 'False')
+            hide_score = (query.get('hide_score') or ['0'])[0] in ('1', 'true', 'True')
+            with db() as conn:
+                saved = conn.execute(
+                    'SELECT * FROM exams WHERE archived=0 AND grade=? ORDER BY exam_date, created_at, id',
+                    (grade,),
+                ).fetchall()
+                grade_exams = [
+                    (exam_summary(r), exam_analysis(r, include_tables=False), get_teachers_map(conn, r['id']))
+                    for r in saved
+                ]
+            filename, zip_bytes = build_student_cards_zip(
+                grade_exams, exam_id, class_name=class_name, hide_rank=hide_rank, hide_score=hide_score
+            )
+            return self.send(zip_bytes, mime='application/zip', filename=filename)
         match = re.fullmatch(r'/api/exams/([^/]+)/scores/edits', path)
         if match:
             exam_id = match.group(1)

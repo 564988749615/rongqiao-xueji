@@ -472,7 +472,7 @@
     const m = brief.meta, h = brief.headline;
     const hL = h.high.label, mL = h.main.label;
     return `<section class="pm-mod pm-avoid">
-      <div class="pm-mod-head"><h3>班情核心 KPI 与谈话要点</h3><span>${e(m.exam_name)} · 实考 ${n(h.participants, 0)}/${n(h.registered, 0)} 人 · 标准差 ${n(h.std)} · 后20% ${n(h.bottom20_count, 0)} 人</span></div>
+      <div class="pm-mod-head"><h3>班情核心 KPI 与谈话要点</h3><span>${e(m.exam_name)} · 实考 ${n(h.participants, 0)}/${n(h.registered, 0)} 人 · 中位数 ${n(h.median)} · 标准差 ${n(h.std)} · 后20% ${n(h.bottom20_count, 0)} 人${h.distribution_shape?.label ? ` · ${e(h.distribution_shape.label)}` : ''}</span></div>
       <div class="pm-kpis">
         <div class="pm-kpi accent-green"><small>${e(hL)}尖优（线 ${n(h.high.cutoff)}）</small><strong>${n(h.high.count, 0)}人 <em>${pctText(h.high.rate)}</em></strong><span>较上次 ${signed(h.high.delta_prev_count, 0)} · 较首考 ${signed(h.high.delta_entry_count, 0)}</span></div>
         <div class="pm-kpi accent-purple"><small>${e(mL)}基本盘（线 ${n(h.main.cutoff)}）</small><strong>${n(h.main.count, 0)}人 <em>${pctText(h.main.rate)}</em></strong><span>较上次 ${signed(h.main.delta_prev_count, 0)} · 较首考 ${signed(h.main.delta_entry_count, 0)}</span></div>

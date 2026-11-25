@@ -1329,6 +1329,24 @@ tr[tabindex]:focus-visible { outline: 2px solid var(--primary); outline-offset: 
 
 .brief-anchor { display: block; margin: 14px 0 4px; padding: 14px 20px; }
 .anchor-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+.anchor-head-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.anchor-prompt-btn {
+  appearance: none; border: 1px solid rgba(255, 255, 255, 0.32); background: rgba(255, 255, 255, 0.10);
+  color: #ffffff; font: inherit; font-size: 11.5px; font-weight: 550; padding: 3px 10px;
+  border-radius: 6px; cursor: pointer; transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.anchor-prompt-btn:hover { background: rgba(255, 255, 255, 0.20); border-color: rgba(255, 255, 255, 0.52); }
+.prompt-studio-wrap { display: flex; flex-direction: column; gap: 10px; }
+.prompt-scenario-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.prompt-opt-row { display: flex; flex-wrap: wrap; gap: 10px 18px; padding: 8px 10px; background: var(--surface-subtle); border: 1px solid var(--line); border-radius: 8px; }
+.prompt-preview-box {
+  width: 100%; font: 12.5px/1.6 ui-monospace, SFMono-Regular, Menlo, "PingFang SC", monospace;
+  color: var(--ink); background: #fafafd; border: 1px solid var(--line-strong); border-radius: 8px;
+  padding: 10px 12px; resize: vertical; font-variant-numeric: tabular-nums;
+}
+@media (max-width: 780px) {
+  .prompt-scenario-grid { grid-template-columns: 1fr; }
+}
 .anchor-tags { display: flex; gap: 6px; flex-wrap: wrap; }
 .anchor-tags span {
   font-size: 11.5px; padding: 2px 8px; border-radius: 999px;

@@ -250,7 +250,7 @@
         <div class="card-title-block">
           <div class="print-brand-tag"><span></span>融侨学迹 · 班情分析会议专用</div>
           <h1>${e(m.grade)} · ${e(m.class)}班 班情双线谈话卡</h1>
-          <p class="card-meta-line"><span>${e(m.exam_name)}（${e(m.exam_date)}）</span><span>班主任：<strong>${e(m.homeroom || '未录入')}</strong></span><span>实考 ${n(h.participants, 0)}/${n(h.registered, 0)} 人</span><span>标准差 ${n(h.std)}</span><span>后20% ${n(h.bottom20_count, 0)} 人</span><span>数据版本 v${m.data_version || 1}${m.edit_count ? ` · 含 ${m.edit_count} 处更正` : ' · 原始导入'}</span></p>
+          <p class="card-meta-line"><span>${e(m.exam_name)}（${e(m.exam_date)}）</span><span>班主任：<strong>${e(m.homeroom || '未录入')}</strong></span><span>实考 ${n(h.participants, 0)}/${n(h.registered, 0)} 人</span><span>中位数 ${n(h.median)}</span><span>标准差 ${n(h.std)}</span><span>后20% ${n(h.bottom20_count, 0)} 人</span>${h.distribution_shape?.label ? `<span>形态：<strong>${e(h.distribution_shape.label)}</strong></span>` : ''}<span>数据版本 v${m.data_version || 1}${m.edit_count ? ` · 含 ${m.edit_count} 处更正` : ' · 原始导入'}</span></p>
         </div>
         <div class="card-kpis">
           <div class="kpi-green"><small>${e(hL)}尖优（线 ${n(h.high.cutoff)}）</small><b>${n(h.high.count, 0)}人 <em>${pctText(h.high.rate)}</em></b><span>较上次 ${signed(h.high.delta_prev_count, 0)} · 较首考 ${signed(h.high.delta_entry_count, 0)}</span></div>
@@ -553,14 +553,17 @@
         <div class="bk-cell">
           <span class="bk-label">总分均分（离均差）</span>
           <strong class="bk-val">${fix(h.mean, 1)}<em class="${(h.mean_diff || 0) >= 0 ? 'delta-positive' : 'delta-negative'}">${signed(h.mean_diff, 1)}</em></strong>
-          <span class="bk-sub">年级 ${fix(h.grade_mean, 1)} · 标准差 ${fix(h.std, 1)} · <span class="nowrap">后20% ${n(h.bottom20_count, 0)}人</span></span>
+          <span class="bk-sub">中位数 ${fix(h.median, 1)} · 年级 ${fix(h.grade_mean, 1)} · 标准差 ${fix(h.std, 1)} · <span class="nowrap">后20% ${n(h.bottom20_count, 0)}人</span>${h.distribution_shape?.label && h.distribution_shape.type !== 'insufficient' ? ` · <b title="${e(h.distribution_shape.focus || '')}">${e(h.distribution_shape.label)}</b>` : ''}</span>
         </div>
       </div>
 
       <div class="anchor-spotlight brief-anchor">
         <div class="anchor-head">
           <span class="anchor-kicker">诊断要点 · 班情会可直接开口</span>
-          <div class="anchor-tags">${h.tags.map(t => `<span>${e(t.text)}</span>`).join('')}</div>
+          <div class="anchor-head-right">
+            <div class="anchor-tags">${h.tags.map(t => `<span>${e(t.text)}</span>`).join('')}</div>
+            <button type="button" class="anchor-prompt-btn" data-action="open-prompt-studio" title="复制脱敏后的结构化提示词，用于 AI 起草发言稿或家长会总结">复制 AI 提示词</button>
+          </div>
         </div>
         <ol class="anchor-list">${h.talking_points.map(p => `<li>${e(p)}</li>`).join('')}</ol>
       </div>
@@ -659,8 +662,9 @@
                   <button type="button" data-action="print-brief-card"><strong>打印 · 领导谈话卡（1 页横向）</strong><small>20%/40% 双线定调 + 谈话要点 + 包干名单</small></button>
                   <button type="button" data-action="open-batch-print"><strong>批量打印全年级…</strong><small>一键生成全年级 ${m.classes.length} 个班自动分页稿</small></button>
                   <div class="print-menu-divider"></div>
-                  <button type="button" data-action="open-student-cards" data-class="${e(m.class)}"><strong>学生个人诊断卡（发家长/学生）…</strong><small>零他人隐私 · 雷达图 + 百分位 + 提分抓手</small></button>
+                  <button type="button" data-action="open-student-cards" data-class="${e(m.class)}"><strong>学生个人诊断卡（发家长/学生）…</strong><small>零他人隐私 · 雷达图 + 百分位 + 一人一档 ZIP</small></button>
                   <button type="button" data-action="download-class-zip"><strong>一键按班拆包导出 ZIP（发班主任）</strong><small>每班独立文件夹 · 成绩明细 + ABC 表 + 打印版</small></button>
+                  <button type="button" data-action="open-prompt-studio"><strong>复制脱敏分析提示词（AI 写稿）…</strong><small>班情会发言稿 / 家长会总结 / 短板会诊，离线防编造</small></button>
                   <div class="print-menu-divider"></div>
                   <button type="button" data-action="open-teachers"><strong>任课教师配置与导入…</strong><small>配置班主任与各科教师，支持同师多班对照</small></button>
                 </div>

@@ -59,6 +59,116 @@ def _subject_sort_key(sub: str) -> tuple:
     return (0, SUBJECT_ORDER.index(sub)) if sub in SUBJECT_ORDER else (1, sub)
 
 
+def _quantile(sorted_vals: list[float], p: float) -> float | None:
+    if not sorted_vals:
+        return None
+    n = len(sorted_vals)
+    if n == 1:
+        return rounded(sorted_vals[0], 1)
+    pos = (n - 1) * p
+    lo = int(math.floor(pos))
+    hi = min(n - 1, lo + 1)
+    frac = pos - lo
+    return rounded(sorted_vals[lo] + (sorted_vals[hi] - sorted_vals[lo]) * frac, 1)
+
+
+def _classify_distribution_shape(
+    totals: list[float],
+    *,
+    mean: float | None,
+    std: float | None,
+    grade_std: float | None,
+    high_rate: float | None,
+    bottom20_rate: float | None,
+) -> dict:
+    """Classify class total-score distribution shape using mean vs median and tail shares."""
+    vals = sorted(float(v) for v in totals if v is not None)
+    n = len(vals)
+    median = _quantile(vals, 0.5)
+    q25 = _quantile(vals, 0.25)
+    q75 = _quantile(vals, 0.75)
+    iqr = rounded(q75 - q25, 1) if (q75 is not None and q25 is not None) else None
+    gap = rounded(mean - median, 1) if (mean is not None and median is not None) else None
+
+    if n < 5 or mean is None or median is None:
+        return {
+            "type": "insufficient",
+            "label": "样本偏少",
+            "focus": "有效样本不足 5 人，暂不作分布形态判型",
+            "tone": "neutral",
+            "median": median,
+            "q25": q25,
+            "q75": q75,
+            "iqr": iqr,
+            "mean_median_gap": gap,
+            "summary": "",
+        }
+
+    h_rate = float(high_rate or 0.0)
+    b_rate = float(bottom20_rate or 0.0)
+    skew_thr = max(3.0, (float(std) * 0.12) if std else 3.0)
+    wide_std = bool(std is not None and grade_std and grade_std > 0 and std >= grade_std * 1.15)
+    narrow_std = bool(std is not None and grade_std and grade_std > 0 and std <= grade_std * 0.88)
+
+    if (h_rate >= 24.0 and b_rate >= 24.0) or (wide_std and h_rate >= 20.0 and b_rate >= 20.0):
+        shape_type = "bimodal"
+        label = "两极分化"
+        focus = "分层施教（培优拔高与低分兜底并行）"
+        tone = "alert"
+        summary = (
+            f"分布形态判型：两极分化（前段占比 {h_rate:.1f}%、后20%占 {b_rate:.1f}%，中位数 {median:.1f}、标准差 {std or 0:.1f}），"
+            f"建议工作重心放在分层施教，尖优拓展与基础兜底同步推进。"
+        )
+    elif (gap is not None and gap <= -skew_thr) or (b_rate >= 25.0 and gap is not None and gap < 0):
+        shape_type = "tail_heavy"
+        label = "左偏·尾部拖累"
+        focus = "重心捞尾巴（排查低分段断层与基础过关）"
+        tone = "warn"
+        summary = (
+            f"分布形态判型：左偏·尾部拖累（均分 {mean:.1f} 低于中位数 {median:.1f} 达 {abs(gap):.1f} 分，后20%占 {b_rate:.1f}%），"
+            f"说明多数学生高于均分、低分尾部拉低了班级大盘，建议重心放在捞尾巴与基础过关。"
+        )
+    elif gap is not None and gap >= skew_thr:
+        shape_type = "top_pulled"
+        label = "右偏·尖子拉高"
+        focus = "防均分虚高（重心推中段、夯基础）"
+        tone = "warn"
+        summary = (
+            f"分布形态判型：右偏·尖子拉高（均分 {mean:.1f} 高于中位数 {median:.1f} 达 {gap:.1f} 分，后20%占 {b_rate:.1f}%），"
+            f"说明尖子拉高了班级均分、中后段偏弱，建议警惕均分掩盖结构问题，重心推中段与夯基础。"
+        )
+    elif (h_rate < 16.0 and b_rate <= 16.0) or (narrow_std and h_rate < 18.0 and b_rate <= 20.0):
+        shape_type = "clustered_mid"
+        label = "中段密集·缺冒尖"
+        focus = "重心推中段与培优拔尖"
+        tone = "warn"
+        summary = (
+            f"分布形态判型：中段密集·缺冒尖（中位数 {median:.1f}，后20%仅占 {b_rate:.1f}%，但高分段占比仅 {h_rate:.1f}%），"
+            f"说明底部稳但缺少领跑尖子，建议重心放在推中段冲线与培优拔尖。"
+        )
+    else:
+        shape_type = "balanced"
+        label = "分布均衡"
+        focus = "整体稳步推进，按学科抓临界转化"
+        tone = "good"
+        summary = (
+            f"分布形态判型：分布均衡（均分 {mean:.1f} 与中位数 {median:.1f} 接近，后20%占 {b_rate:.1f}%），整体稳步推进。"
+        )
+
+    return {
+        "type": shape_type,
+        "label": label,
+        "focus": focus,
+        "tone": tone,
+        "median": median,
+        "q25": q25,
+        "q75": q75,
+        "iqr": iqr,
+        "mean_median_gap": gap,
+        "summary": summary,
+    }
+
+
 def _diagnose_mismatch(
     high_gap: int,
     main_gap: int,
@@ -221,6 +331,20 @@ def build_class_brief(
     curr_cls_active = [s for s in curr_active_all if s["class"] == cls]
     bottom20_rank = math.floor(curr_n * 0.80) if curr_n else 0
     bottom20_count = sum(1 for s in curr_cls_active if s["rank"] is not None and s["rank"] > bottom20_rank)
+    bottom20_rate = _pct(bottom20_count, curr_tl["participants"])
+    grade_totals = [float(s["total"]) for s in curr_active_all if s.get("total") is not None]
+    grade_std = None
+    if grade_totals and curr_tl["grade_mean"] is not None:
+        gm = float(curr_tl["grade_mean"])
+        grade_std = rounded(math.sqrt(sum((v - gm) ** 2 for v in grade_totals) / len(grade_totals)), 1)
+    dist_shape = _classify_distribution_shape(
+        [float(s["total"]) for s in curr_cls_active if s.get("total") is not None],
+        mean=curr_tl["mean"],
+        std=curr_tl["std"],
+        grade_std=grade_std,
+        high_rate=curr_tl["high_rate"],
+        bottom20_rate=bottom20_rate,
+    )
 
     # Same-teacher cross-class stats for current exam
     all_class_metrics = {}
@@ -607,6 +731,11 @@ def build_class_brief(
         tags.append({"tone": "warn", "text": f"可速提单科短板生 {len(single_lame_high) + len(single_lame_main)} 人"})
         talking_points.append("现场派活抓手：" + "；".join(parts) + "，可由对应薄弱科任课老师直接认领面批。")
 
+    if dist_shape["type"] not in ("balanced", "insufficient"):
+        tags.append({"tone": dist_shape["tone"], "text": f"形态：{dist_shape['label']}"})
+        if dist_shape.get("summary"):
+            talking_points.append(dist_shape["summary"])
+
     if not talking_points:
         talking_points.append(
             f"{cls}班本次前{high_pct_label}达线 {curr_tl['high_count']} 人（{curr_tl['high_rate'] or 0}%），前{main_pct_label}达线 {curr_tl['main_count']} 人（{curr_tl['main_rate'] or 0}%），各学科表现整体平稳。"
@@ -619,7 +748,14 @@ def build_class_brief(
         "grade_mean": curr_tl["grade_mean"],
         "mean_diff": curr_tl["mean_diff"],
         "std": curr_tl["std"],
+        "median": dist_shape["median"],
+        "q25": dist_shape["q25"],
+        "q75": dist_shape["q75"],
+        "iqr": dist_shape["iqr"],
+        "mean_median_gap": dist_shape["mean_median_gap"],
         "bottom20_count": bottom20_count,
+        "bottom20_rate": bottom20_rate,
+        "distribution_shape": dist_shape,
         "elite_ratio": _pct(curr_tl["high_count"], curr_tl["main_count"]),
         "high": {
             "ratio": high_ratio,

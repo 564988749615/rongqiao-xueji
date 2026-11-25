@@ -58,21 +58,43 @@
     return `<svg class="sc-spark" viewBox="0 0 ${w} ${h}" role="img" aria-label="个人年级百分位成长走势">${ticks}<polyline fill="none" stroke="#6f4eb8" stroke-width="2" points="${pts.map(p => p.map(v => v.toFixed(1)).join(',')).join(' ')}"/>${labels}</svg>`;
   }
 
-  function singleCardHTML(card, meta, { hideRank = true, compact = true } = {}) {
+  function singleCardHTML(card, meta, { hideRank = true, hideScore = false, compact = true } = {}) {
     const subRows = (card.subjects || []).map(s => {
       const prVal = s.pr != null ? Math.max(0, Math.min(100, Number(s.pr))) : null;
+      const lvlText = e(s.level !== '—' ? s.level : s.grade);
+      const prHTML = prVal == null ? '—' : `<span class="pr-bar"><i style="width:${prVal}%"></i></span><span class="pr-num">${n(prVal, 0)}%</span>`;
+      if (hideScore) {
+        let posLabel = '—', posCls = '';
+        if (prVal != null) {
+          if (prVal >= 80) { posLabel = '明显优势'; posCls = 'pos'; }
+          else if (prVal >= 55) { posLabel = '稳健良好'; posCls = 'pos'; }
+          else if (prVal >= 35) { posLabel = '中段可提'; }
+          else { posLabel = '优先夯基'; posCls = 'neg'; }
+        }
+        return `<tr>
+          <td class="sub-name">${e(s.subject)}</td>
+          <td class="center"><span class="lvl-pill">${lvlText}</span></td>
+          <td class="pr-cell">${prHTML}</td>
+          <td class="center ${posCls}">${posLabel}</td>
+        </tr>`;
+      }
       const diffTxt = s.mean_diff == null ? '—' : `${s.mean_diff >= 0 ? '+' : ''}${n(s.mean_diff, 1)}`;
       const diffCls = s.mean_diff == null ? '' : s.mean_diff >= 0 ? 'pos' : 'neg';
       return `<tr>
         <td class="sub-name">${e(s.subject)}</td>
         <td class="num"><b>${s.score == null ? '缺' : n(s.score, 1)}</b>${s.full_mark ? `<small>/${n(s.full_mark, 0)}</small>` : ''}</td>
-        <td class="center"><span class="lvl-pill">${e(s.level !== '—' ? s.level : s.grade)}</span></td>
-        <td class="pr-cell">${prVal == null ? '—' : `<span class="pr-bar"><i style="width:${prVal}%"></i></span><span class="pr-num">${n(prVal, 0)}%</span>`}</td>
+        <td class="center"><span class="lvl-pill">${lvlText}</span></td>
+        <td class="pr-cell">${prHTML}</td>
         <td class="num ${diffCls}">${diffTxt}</td>
       </tr>`;
     }).join('');
 
     const adv = card.advice || {};
+    const ver = meta.data_version || 1;
+    const ec = meta.edit_count || 0;
+    const verStamp = `数据版本 v${ver}${ec ? ` · 含 ${ec} 处更正` : ' · 原始导入'}`;
+    const modeTag = hideScore ? '仅等级与相对强弱（零分零名次）' : (hideRank ? '仅含本人成绩（已隐藏名次）' : '仅含本人成绩（隐私保护版）');
+    const hideEffectiveRank = hideRank || hideScore;
     return `<article class="student-card ${compact ? 'is-compact' : 'is-full'}">
       <header class="sc-header">
         <div>
@@ -81,31 +103,30 @@
         </div>
         <div class="sc-exam-meta">
           <strong>${e(meta.exam_name)}</strong>
-          <span>${e(meta.date)} · 仅含本人成绩（隐私保护版）</span>
+          <span>${e(meta.date)} · ${modeTag}</span>
         </div>
       </header>
       <div class="sc-kpis">
-        <div class="sc-kpi">
-          <small>总分</small>
-          <strong>${card.total == null ? '—' : n(card.total, 1)}${card.full_total ? `<em>/${n(card.full_total, 0)}</em>` : '<em>分</em>'}</strong>
-        </div>
-        <div class="sc-kpi">
-          <small>学业等级</small>
-          <strong>${e(card.total_level !== '—' ? card.total_level : card.total_grade)}</strong>
-        </div>
+        ${hideScore
+          ? `<div class="sc-kpi"><small>学业等级</small><strong>${e(card.total_level !== '—' ? card.total_level : card.total_grade)}</strong></div>
+             <div class="sc-kpi"><small>参评学科</small><strong>${(card.subjects || []).length}<em>科</em></strong></div>`
+          : `<div class="sc-kpi"><small>总分</small><strong>${card.total == null ? '—' : n(card.total, 1)}${card.full_total ? `<em>/${n(card.full_total, 0)}</em>` : '<em>分</em>'}</strong></div>
+             <div class="sc-kpi"><small>学业等级</small><strong>${e(card.total_level !== '—' ? card.total_level : card.total_grade)}</strong></div>`}
         <div class="sc-kpi accent">
           <small>年级百分位（PR）</small>
           <strong>${card.pr == null ? '—' : `超越 ${n(card.pr, 1)}%`}</strong>
         </div>
         <div class="sc-kpi">
-          <small>${hideRank ? '标准分（T分）' : '年级参考位次'}</small>
-          <strong>${hideRank ? (card.t_score == null ? '—' : n(card.t_score, 1)) : (card.rank == null ? '—' : `${n(card.rank, 0)} / ${n(card.participants, 0)}`)}</strong>
+          <small>${hideEffectiveRank ? '标准分（T分）' : '年级参考位次'}</small>
+          <strong>${hideEffectiveRank ? (card.t_score == null ? '—' : n(card.t_score, 1)) : (card.rank == null ? '—' : `${n(card.rank, 0)} / ${n(card.participants, 0)}`)}</strong>
         </div>
       </div>
       <div class="sc-body">
         <div class="sc-table-col">
           <table>
-            <thead><tr><th>学科</th><th class="num">得分</th><th class="center">等级</th><th>学科年级百分位</th><th class="num">较均分</th></tr></thead>
+            <thead>${hideScore
+              ? '<tr><th>学科</th><th class="center">等级</th><th>学科年级百分位</th><th class="center">强弱定位</th></tr>'
+              : '<tr><th>学科</th><th class="num">得分</th><th class="center">等级</th><th>学科年级百分位</th><th class="num">较均分</th></tr>'}</thead>
             <tbody>${subRows}</tbody>
           </table>
         </div>
@@ -125,13 +146,13 @@
         <p><b>提分抓手：</b>${e(adv.focus_text || '')}${adv.trend_text ? ` ${e(adv.trend_text)}` : ''}</p>
       </div>
       <footer class="sc-sign">
-        <span>学生反思 / 近期目标：</span>
+        <span>学生反思 / 近期目标：<small class="sc-ver">${e(verStamp)}</small></span>
         <span class="sc-sign-right">家长签字：<u>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u> &nbsp;日期：<u>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u></span>
       </footer>
     </article>`;
   }
 
-  function printStudentCards(payload, { layout = 'two-up', hideRank = true } = {}) {
+  function printStudentCards(payload, { layout = 'two-up', hideRank = true, hideScore = false } = {}) {
     const cards = payload?.cards || [];
     const meta = payload?.meta || {};
     if (!cards.length) {
@@ -143,7 +164,7 @@
     const perPage = compact ? 2 : 1;
     for (let i = 0; i < cards.length; i += perPage) {
       const slice = cards.slice(i, i + perPage);
-      pages.push(`<section class="a4-sheet ${compact ? 'sheet-two' : 'sheet-one'}">${slice.map(c => singleCardHTML(c, meta, { hideRank, compact })).join(compact && slice.length === 2 ? '<div class="cut-line"><span>沿此虚线裁切</span></div>' : '')}</section>`);
+      pages.push(`<section class="a4-sheet ${compact ? 'sheet-two' : 'sheet-one'}">${slice.map(c => singleCardHTML(c, meta, { hideRank, hideScore, compact })).join(compact && slice.length === 2 ? '<div class="cut-line"><span>沿此虚线裁切</span></div>' : '')}</section>`);
     }
 
     const doc = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
@@ -205,6 +226,7 @@
   .is-full .sc-advice { padding: 10px 12px; font-size: 11.5px; line-height: 1.5; }
   .sc-advice p { margin: 1.5px 0; }
   .sc-sign { display: flex; justify-content: space-between; align-items: flex-end; border-top: 1px dashed #d1c8e2; padding-top: 4px; font-size: 9.5px; color: #5c526e; flex-shrink: 0; }
+  .sc-ver { display: block; font-size: 8px; color: #8b82a0; margin-top: 2px; }
   .is-full .sc-sign { min-height: 58px; padding-top: 10px; font-size: 11px; }
   .print-bar-actions { display: flex; align-items: center; gap: 14px; }
   .bw-toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: #e5dff2; cursor: pointer; user-select: none; }
@@ -266,12 +288,17 @@
             <input type="checkbox" name="hide_rank" id="cards-hide-rank" checked>
             <span>隐藏具体名次（仅展示等级、年级百分位 PR 与标准分 T 分，符合双减隐私规范）</span>
           </label>
+          <label class="rules-scope-check">
+            <input type="checkbox" name="hide_score" id="cards-hide-score">
+            <span>仅展示等级与相对强弱（同时隐藏原始分数与名次，更严格脱敏）</span>
+          </label>
         </div>
       </div>
       <div id="cards-error" class="error" hidden></div>
       <div class="form-actions">
         <button type="submit" class="btn primary">生成并预览打印</button>
-        <button type="button" class="btn secondary" data-action="close-drawer">取消</button>
+        <button type="button" class="btn secondary" data-action="download-student-cards-zip">下载一人一档 HTML 包（ZIP 发家长）</button>
+        <button type="button" class="btn quiet" data-action="close-drawer">取消</button>
       </div>
     </form>`;
   }
