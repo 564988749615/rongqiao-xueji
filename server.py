@@ -55,14 +55,39 @@ from exporter import (
 from history import calc_pr, calc_t_score, calculate_history as _calculate_history_core, enrich_trends_scales
 import s3_store
 from workbook import (
+    SUBJECT_ORDER,
     apply_name_fixes,
     check_roster_hygiene,
+    generate_pe_template_xlsx,
     inspect_multi_workbook,
     normalize_class,
     parse_score_edits_file,
+    parse_subject_supplement_file,
     parse_teachers_workbook,
     parse_workbook,
 )
+
+TERM_OPTIONS = ('初一上', '初一下', '初二上', '初二下', '初三上', '初三下')
+
+
+def infer_term_from_name(name: str, explicit_term: str = '') -> str:
+    """Normalize or infer standard junior-high term (初一上..初三下) from explicit term or exam name."""
+    raw = str(explicit_term or '').strip()
+    if raw in TERM_OPTIONS:
+        return raw
+    text = (raw + ' ' + str(name or '')).strip()
+    patterns = (
+        ('初一上', r'(?:初一|七年级|七)[\s·\-]*上'),
+        ('初一下', r'(?:初一|七年级|七)[\s·\-]*下'),
+        ('初二上', r'(?:初二|八年级|八)[\s·\-]*上'),
+        ('初二下', r'(?:初二|八年级|八)[\s·\-]*下'),
+        ('初三上', r'(?:初三|九年级|九)[\s·\-]*上'),
+        ('初三下', r'(?:初三|九年级|九)[\s·\-]*下'),
+    )
+    for label, pat in patterns:
+        if re.search(pat, text):
+            return label
+    return raw[:20] if raw else ''
 
 _CACHE_LOCK = threading.Lock()
 _ANALYSIS_CACHE: OrderedDict[tuple, dict] = OrderedDict()
@@ -71,6 +96,7 @@ _CACHE_LIMIT = 64
 _EXAM_META_COLUMNS = (
     ('name', "TEXT NOT NULL DEFAULT ''"),
     ('grade', "TEXT NOT NULL DEFAULT ''"),
+    ('term', "TEXT NOT NULL DEFAULT ''"),
     ('exam_date', "TEXT NOT NULL DEFAULT ''"),
     ('filename', "TEXT NOT NULL DEFAULT ''"),
     ('imported_at', "TEXT NOT NULL DEFAULT ''"),
@@ -81,7 +107,7 @@ _EXAM_META_COLUMNS = (
     ('published_at', "TEXT NOT NULL DEFAULT ''"),
 )
 _SUMMARY_SQL = (
-    'SELECT id, name, grade, exam_date, filename, imported_at, row_count, subject_count, '
+    'SELECT id, name, grade, term, exam_date, filename, imported_at, row_count, subject_count, '
     'edit_count, data_version, published_at, rules, archived, created_at, updated_at FROM exams'
 )
 
@@ -192,6 +218,14 @@ def init_db() -> None:
                     row['id'],
                 ),
             )
+        # Backfill inferred term for legacy rows that have no term set yet.
+        empty_term_rows = conn.execute("SELECT id, name, dataset FROM exams WHERE term=''").fetchall()
+        for row in empty_term_rows:
+            d = json.loads(row['dataset'])
+            inferred = infer_term_from_name(row['name'] or d.get('name', ''), d.get('term', ''))
+            if inferred:
+                d['term'] = inferred
+                conn.execute('UPDATE exams SET term=?, dataset=? WHERE id=?', (inferred, encode(d), row['id']))
         conn.execute(
             'CREATE INDEX IF NOT EXISTS idx_exams_archived_grade ON exams(archived, grade, exam_date, created_at)'
         )
@@ -503,9 +537,9 @@ def _restore_backup_dict(backup: dict, *, mode: str = 'append_only') -> dict:
                 conn.execute(
                     '''INSERT INTO exams(
                          id, dataset, rules, archived, created_at, updated_at,
-                         name, grade, exam_date, filename, imported_at, row_count, subject_count,
+                         name, grade, term, exam_date, filename, imported_at, row_count, subject_count,
                          edit_count, data_version, published_at
-                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)''',
+                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)''',
                     (
                         item['id'],
                         encode(item['dataset']),
@@ -527,7 +561,7 @@ def _restore_backup_dict(backup: dict, *, mode: str = 'append_only') -> dict:
                     conn.execute(
                         '''UPDATE exams SET
                              dataset=?, rules=?, archived=?, updated_at=?,
-                             name=?, grade=?, exam_date=?, filename=?, imported_at=?, row_count=?, subject_count=?,
+                             name=?, grade=?, term=?, exam_date=?, filename=?, imported_at=?, row_count=?, subject_count=?,
                              data_version=?, published_at=?
                            WHERE id=?''',
                         (
@@ -696,9 +730,12 @@ def _trigger_auto_sync(label: str = 'auto') -> None:
 
 
 def _dataset_meta(dataset: dict, fallback_created_at: str) -> tuple:
+    name = dataset.get('name', '未命名考试')
+    term = infer_term_from_name(name, dataset.get('term', ''))
     return (
-        dataset.get('name', '未命名考试'),
+        name,
         dataset.get('grade', '未分年级'),
+        term,
         dataset.get('date', ''),
         dataset.get('filename', ''),
         dataset.get('imported_at', fallback_created_at),
@@ -712,11 +749,13 @@ def exam_summary(row) -> dict:
     edit_count = int(row['edit_count']) if 'edit_count' in keys and row['edit_count'] is not None else 0
     data_version = int(row['data_version']) if 'data_version' in keys and row['data_version'] is not None else 1
     published_at = str(row['published_at'] or '') if 'published_at' in keys else ''
+    term_val = str(row['term'] or '') if 'term' in keys else ''
     if 'row_count' in keys and (row['name'] or row['row_count']):
         return dict(
             id=row['id'],
             name=row['name'] or '未命名考试',
             grade=row['grade'] or '未分年级',
+            term=term_val or infer_term_from_name(row['name'] or ''),
             date=row['exam_date'] or '',
             filename=row['filename'] or '',
             imported_at=row['imported_at'] or row['created_at'],
@@ -734,6 +773,7 @@ def exam_summary(row) -> dict:
         id=row['id'],
         name=d.get('name', '未命名考试'),
         grade=d.get('grade', '未分年级'),
+        term=term_val or infer_term_from_name(d.get('name', ''), d.get('term', '')),
         date=d.get('date', ''),
         filename=d.get('filename', ''),
         imported_at=d.get('imported_at', row['created_at']),
@@ -1322,6 +1362,12 @@ class Handler(BaseHTTPRequestHandler):
                 mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                 filename='融侨学迹_小题分导入模板.xlsx',
             )
+        if path == '/api/templates/pe-scores.xlsx':
+            return self.send(
+                generate_pe_template_xlsx(),
+                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                filename='融侨学迹_体育补录模板.xlsx',
+            )
         match_items_get = re.fullmatch(r'/api/exams/([^/]+)/item-analyses', path)
         if match_items_get:
             exam_id = match_items_get.group(1)
@@ -1775,11 +1821,11 @@ class Handler(BaseHTTPRequestHandler):
                 conn.execute(
                     '''INSERT INTO exams(
                          id, dataset, rules, created_at, updated_at,
-                         name, grade, exam_date, filename, imported_at, row_count, subject_count
-                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                         name, grade, term, exam_date, filename, imported_at, row_count, subject_count
+                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
                        ON CONFLICT(id) DO UPDATE SET
                          dataset=excluded.dataset, rules=excluded.rules, updated_at=excluded.updated_at,
-                         name=excluded.name, grade=excluded.grade, exam_date=excluded.exam_date,
+                         name=excluded.name, grade=excluded.grade, term=excluded.term, exam_date=excluded.exam_date,
                          filename=excluded.filename, imported_at=excluded.imported_at,
                          row_count=excluded.row_count, subject_count=excluded.subject_count''',
                     (dataset['id'], encode(dataset), encode(result['rules']), timestamp, timestamp, *meta),
@@ -1862,11 +1908,11 @@ class Handler(BaseHTTPRequestHandler):
                     conn.execute(
                         '''INSERT INTO exams(
                              id, dataset, rules, created_at, updated_at,
-                             name, grade, exam_date, filename, imported_at, row_count, subject_count
-                           ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                             name, grade, term, exam_date, filename, imported_at, row_count, subject_count
+                           ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
                            ON CONFLICT(id) DO UPDATE SET
                              dataset=excluded.dataset, rules=excluded.rules, updated_at=excluded.updated_at,
-                             name=excluded.name, grade=excluded.grade, exam_date=excluded.exam_date,
+                             name=excluded.name, grade=excluded.grade, term=excluded.term, exam_date=excluded.exam_date,
                              filename=excluded.filename, imported_at=excluded.imported_at,
                              row_count=excluded.row_count, subject_count=excluded.subject_count''',
                         (ds['id'], encode(ds), encode(result['rules']), timestamp, timestamp, *meta),
@@ -2186,21 +2232,24 @@ class Handler(BaseHTTPRequestHandler):
             if action == 'meta':
                 name = str(payload.get('name', '')).strip()
                 grade = str(payload.get('grade', '')).strip()
+                term = infer_term_from_name(name, str(payload.get('term', '')).strip()) if payload.get('term') is not None else infer_term_from_name(name)
+                if 'term' in payload and str(payload.get('term') or '').strip() == '':
+                    term = ''
                 date = str(payload.get('date', '')).strip()
                 if not name or not grade or not date:
-                    raise ValueError('考试名称、年级和日期均不能为空。')
+                    raise ValueError('考试名称、届别和日期均不能为空。')
                 if len(name) > 300 or len(grade) > 300:
-                    raise ValueError('考试名称或年级过长。')
+                    raise ValueError('考试名称或届别过长。')
                 try:
                     datetime.strptime(date, '%Y-%m-%d')
                 except ValueError:
                     raise ValueError('考试日期应为年月日，例如2026-10-19。')
                 dataset = json.loads(row['dataset'])
-                dataset['name'], dataset['grade'], dataset['date'] = name, grade, date
+                dataset['name'], dataset['grade'], dataset['term'], dataset['date'] = name, grade, term, date
                 with db() as conn:
                     conn.execute(
-                        'UPDATE exams SET dataset=?, name=?, grade=?, exam_date=?, updated_at=? WHERE id=?',
-                        (encode(dataset), name, grade, date, now(), exam_id),
+                        'UPDATE exams SET dataset=?, name=?, grade=?, term=?, exam_date=?, updated_at=? WHERE id=?',
+                        (encode(dataset), name, grade, term, date, now(), exam_id),
                     )
                 invalidate_cache(exam_id)
                 return self.send(exam_summary(get_exam(exam_id)))
@@ -2411,6 +2460,95 @@ class Handler(BaseHTTPRequestHandler):
                     for r in saved
                 ]
             return self.send(build_student_cards(grade_exams, exam_id, class_name=class_name, student_id=student_id))
+        match_sub_ops = re.fullmatch(r'/api/exams/([^/]+)/(merge-subject|toggle-subject-total)', path)
+        if match_sub_ops:
+            exam_id, sub_action = match_sub_ops.groups()
+            row = get_exam(exam_id)
+            if row['archived']:
+                raise ValueError('该考试已归档，请先恢复后再操作。')
+            if sub_action == 'toggle-subject-total':
+                sub = str(payload.get('subject') or '体育').strip()
+                include = bool(payload.get('include'))
+                dataset = json.loads(row['dataset'])
+                if sub not in (dataset.get('subjects') or []):
+                    raise ValueError(f'本场考试尚未包含「{sub}」学科，请先补录合并该科成绩。')
+                rules = json.loads(row['rules'])
+                tot_subs = list(rules.get('total_subjects') or dataset['subjects'])
+                if include and sub not in tot_subs:
+                    tot_subs.append(sub)
+                    tot_subs.sort(key=lambda s: SUBJECT_ORDER.index(s) if s in SUBJECT_ORDER else 999)
+                elif not include and sub in tot_subs:
+                    tot_subs = [s for s in tot_subs if s != sub]
+                if not tot_subs:
+                    raise ValueError('总分科目至少保留一门学科。')
+                rules['total_subjects'] = tot_subs
+                validated = analyze(dataset, rules, include_tables=False)
+                ts = now()
+                with db() as conn:
+                    conn.execute('UPDATE exams SET rules=?, updated_at=? WHERE id=?', (encode(validated['rules']), ts, exam_id))
+                invalidate_cache(exam_id)
+                _trigger_auto_sync('rules')
+                return self.send(dict(ok=True, subject=sub, included=include, total_subjects=validated['rules']['total_subjects']))
+
+            # merge-subject
+            subject = str(payload.get('subject') or '体育').strip()
+            include_in_total = bool(payload.get('include_in_total', True))
+            preview_only = bool(payload.get('preview_only', False))
+            filename = str(payload.get('filename') or f'{subject}补录.xlsx').strip()
+            raw_b64 = payload.get('content')
+            if not isinstance(raw_b64, str) or not raw_b64.strip():
+                raise ValueError('请先选择要合并的单科成绩文件。')
+            try:
+                content_bytes = base64.b64decode(raw_b64)
+            except Exception as exc:
+                raise ValueError('文件内容解码失败，请重新选择文件。') from exc
+            dataset = json.loads(row['dataset'])
+            parsed = parse_subject_supplement_file(content_bytes, filename, dataset, subject=subject)
+            if preview_only:
+                return self.send({k: v for k, v in parsed.items() if k != 'matched_scores'})
+
+            sub_name = parsed['subject']
+            matched_scores = parsed['matched_scores']
+            if sub_name not in dataset['subjects']:
+                dataset['subjects'].append(sub_name)
+                dataset['subjects'].sort(key=lambda s: SUBJECT_ORDER.index(s) if s in SUBJECT_ORDER else 999)
+                for r in dataset['rows']:
+                    r.setdefault('scores', {})
+                    r['scores'].setdefault(sub_name, None)
+            for r in dataset['rows']:
+                if r['id'] in matched_scores:
+                    r['scores'][sub_name] = matched_scores[r['id']]
+
+            rules = json.loads(row['rules'])
+            tot_subs = list(rules.get('total_subjects') or dataset['subjects'])
+            if include_in_total and sub_name not in tot_subs:
+                tot_subs.append(sub_name)
+                tot_subs.sort(key=lambda s: SUBJECT_ORDER.index(s) if s in SUBJECT_ORDER else 999)
+            elif not include_in_total and sub_name in tot_subs:
+                tot_subs = [s for s in tot_subs if s != sub_name]
+            if tot_subs:
+                rules['total_subjects'] = tot_subs
+
+            validated = analyze(dataset, rules, include_tables=False)
+            ts = now()
+            new_ver = int(row['data_version'] or 1) + 1
+            with db() as conn:
+                conn.execute(
+                    'UPDATE exams SET dataset=?, rules=?, subject_count=?, data_version=?, updated_at=? WHERE id=?',
+                    (encode(dataset), encode(validated['rules']), len(dataset['subjects']), new_ver, ts, exam_id),
+                )
+            invalidate_cache(exam_id)
+            _trigger_auto_sync('merge-subject')
+            return self.send(dict(
+                ok=True,
+                subject=sub_name,
+                matched_count=parsed['matched_count'],
+                unmatched_count=parsed['unmatched_count'],
+                missing_in_file_count=parsed['missing_in_file_count'],
+                included_in_total=sub_name in validated['rules']['total_subjects'],
+                data_version=new_ver,
+                exam=exam_summary(get_exam(exam_id)),
+            ))
         match_items_post = re.fullmatch(r'/api/exams/([^/]+)/item-analyses/(import|delete)', path)
         if match_items_post:
             exam_id, item_action = match_items_post.groups()

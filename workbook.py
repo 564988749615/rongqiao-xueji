@@ -944,3 +944,183 @@ def parse_score_edits_file(content: bytes, filename: str) -> list[dict]:
     if len(records) > 500:
         raise ValueError('单次更正表最多支持 500 行，请拆分后导入。')
     return records
+
+
+def parse_subject_supplement_file(
+    content_bytes: bytes,
+    filename: str,
+    target_dataset: dict,
+    *,
+    subject: str = "体育",
+) -> dict:
+    """Parse a standalone single-subject score sheet (e.g. 体育/物理/化学) and match against an existing exam."""
+    if not content_bytes:
+        raise ValueError("补录成绩文件为空，请重新选择文件。")
+    sub_name = SUBJECT_ALIASES.get(_header(subject), subject.strip() or "体育")
+    lower = filename.lower()
+    if lower.endswith(".csv"):
+        text = None
+        for enc in ("utf-8-sig", "gb18030", "utf-8"):
+            try:
+                text = content_bytes.decode(enc)
+                break
+            except UnicodeDecodeError:
+                continue
+        if text is None:
+            raise ValueError("CSV 编码无法识别，请另存为 UTF-8 或 Excel (.xlsx) 后重试。")
+        raw_rows = [row for row in csv.reader(io.StringIO(text))]
+    elif lower.endswith((".xlsx", ".xlsm")):
+        try:
+            wb = openpyxl.load_workbook(io.BytesIO(content_bytes), data_only=True, read_only=True)
+        except Exception as exc:
+            raise ValueError("无法读取补录工作簿，请确认文件是未加密且完整的 .xlsx 文件。") from exc
+        try:
+            ws = wb.active
+            raw_rows = [list(r) for r in ws.iter_rows(values_only=True)]
+        finally:
+            wb.close()
+    else:
+        raise ValueError("单科补录支持 .xlsx、.xlsm 和 .csv 格式。旧版 .xls 请先另存为 .xlsx。")
+
+    header_idx = None
+    col_id = col_name = col_class = col_score = None
+    score_generic_headers = {"分数", "成绩", "得分", "原始分", "体育成绩", "体育分", "总分", "实得分"}
+
+    for r_idx, row in enumerate(raw_rows[:15]):
+        cells = [_text(c) for c in row]
+        if sum(1 for c in cells if c) < 2:
+            continue
+        c_id = c_name = c_cls = c_sub = c_gen = None
+        for idx, cell in enumerate(cells):
+            if not cell:
+                continue
+            h = _header(cell)
+            if h in ID_HEADERS or h in EXAM_ID_HEADERS:
+                if c_id is None:
+                    c_id = idx
+            elif h in NAME_HEADERS:
+                c_name = idx
+            elif h in CLASS_HEADERS:
+                c_cls = idx
+            elif _subject(cell) == sub_name:
+                c_sub = idx
+            elif h in score_generic_headers or cell in score_generic_headers:
+                if c_gen is None:
+                    c_gen = idx
+        score_col = c_sub if c_sub is not None else c_gen
+        if score_col is not None and (c_id is not None or c_name is not None):
+            header_idx = r_idx
+            col_id, col_name, col_class, col_score = c_id, c_name, c_cls, score_col
+            break
+
+    if header_idx is None or col_score is None:
+        raise ValueError(
+            f"未能识别「{sub_name}」补录表头。\n"
+            f"排查建议：1) 请在前 15 行包含「学号」或「姓名」（建议加「班级」）以及「{sub_name}」（或「成绩/分数」）列；"
+            f"2) 取消表头合并单元格；3) 可先点击「下载体育补录模板」对照填写。"
+        )
+
+    target_rows = target_dataset.get("rows") or []
+    by_id: dict[str, dict] = {}
+    by_cls_name: dict[tuple[str, str], list[dict]] = {}
+    by_name: dict[str, list[dict]] = {}
+    for row in target_rows:
+        rid = str(row.get("id") or "")
+        by_id[rid] = row
+        if rid.startswith("id:"):
+            by_id[rid[3:]] = row
+        r_cls = normalize_class(row.get("class") or "")
+        r_name = _text(row.get("name") or "")
+        if r_name:
+            by_cls_name.setdefault((r_cls, r_name), []).append(row)
+            by_name.setdefault(r_name, []).append(row)
+
+    matched_scores: dict[str, float | None] = {}
+    preview: list[dict] = []
+    unmatched: list[dict] = []
+
+    for row_num, row in enumerate(raw_rows[header_idx + 1:], start=header_idx + 2):
+        if not row or all(c is None or _text(c) == "" for c in row):
+            continue
+        raw_id = _text(row[col_id]) if (col_id is not None and col_id < len(row)) else ""
+        raw_name = _text(row[col_name]) if (col_name is not None and col_name < len(row)) else ""
+        raw_cls = normalize_class(row[col_class]) if (col_class is not None and col_class < len(row)) else ""
+        raw_val = row[col_score] if col_score < len(row) else None
+
+        if raw_name in SUMMARY_WORDS or raw_cls in SUMMARY_WORDS:
+            continue
+        if not raw_id and not raw_name:
+            continue
+
+        val_text = _text(raw_val)
+        if val_text.lower() in MISSING_WORDS:
+            score_val = None
+        else:
+            try:
+                num = float(val_text)
+                if not math.isfinite(num) or num < 0:
+                    raise ValueError
+                score_val = num
+            except ValueError:
+                unmatched.append({"row": row_num, "class": raw_cls, "name": raw_name or raw_id, "reason": f"分数「{val_text}」不是有效非负数字"})
+                continue
+
+        target = None
+        if raw_id and raw_id in by_id:
+            target = by_id[raw_id]
+        elif raw_cls and raw_name and len(by_cls_name.get((raw_cls, raw_name), [])) == 1:
+            target = by_cls_name[(raw_cls, raw_name)][0]
+        elif raw_name and len(by_name.get(raw_name, [])) == 1:
+            target = by_name[raw_name][0]
+        elif raw_name and len(by_name.get(raw_name, [])) > 1:
+            unmatched.append({"row": row_num, "class": raw_cls, "name": raw_name, "reason": "存在同名学生且未提供准确班级/学号"})
+            continue
+
+        if target is None:
+            unmatched.append({"row": row_num, "class": raw_cls, "name": raw_name or raw_id, "reason": "本场考试中未找到该学生"})
+            continue
+
+        matched_scores[target["id"]] = score_val
+        if len(preview) < 12:
+            preview.append({
+                "class": target.get("class", ""),
+                "name": target.get("name", ""),
+                "old_score": (target.get("scores") or {}).get(sub_name),
+                "new_score": score_val,
+            })
+
+    if not matched_scores:
+        raise ValueError(f"补录表中没有匹配到本场考试的任何学生（共 {len(unmatched)} 行未匹配），请核对学号/姓名与班级。")
+
+    return {
+        "subject": sub_name,
+        "matched_count": len(matched_scores),
+        "total_students": len(target_rows),
+        "missing_in_file_count": max(0, len(target_rows) - len(matched_scores)),
+        "matched_scores": matched_scores,
+        "unmatched": unmatched[:50],
+        "unmatched_count": len(unmatched),
+        "preview": preview,
+    }
+
+
+def generate_pe_template_xlsx() -> bytes:
+    """Generate a standard Excel template for standalone PE / single-subject score supplement."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "体育补录模板"
+    ws.append(["学号", "姓名", "班级", "体育"])
+    ws.append(["20270101", "张一", "01", 48])
+    ws.append(["20270102", "李二", "01", 45.5])
+    ws.append(["20270103", "王三", "01", 50])
+    from openpyxl.styles import Alignment, Font, PatternFill
+    for cell in ws[1]:
+        cell.fill = PatternFill("solid", fgColor="EEE7F8")
+        cell.font = Font(name="Microsoft YaHei", size=10, bold=True, color="3D2570")
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 24
+    for col_l, w in (("A", 14), ("B", 12), ("C", 10), ("D", 12)):
+        ws.column_dimensions[col_l].width = w
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()

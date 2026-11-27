@@ -1375,6 +1375,40 @@ tr[tabindex]:focus-visible { outline: 2px solid var(--primary); outline-offset: 
 }
 .col-toggle-panel label { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--ink); cursor: pointer; }
 body.presenting main { font-size: calc(100% * var(--present-zoom, 1)); }
+
+/* 届别 → 学期层级管理与体育补录 */
+.import-fields-four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.cohort-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0 14px; }
+.cohort-tab {
+  appearance: none; display: inline-flex; align-items: center; gap: 7px; padding: 7px 14px;
+  border: 1px solid var(--line-strong); border-radius: 8px; background: var(--bg);
+  color: var(--ink); font: inherit; font-size: 13px; cursor: pointer;
+  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.cohort-tab:hover { border-color: var(--primary); background: var(--surface-subtle); }
+.cohort-tab.active { background: var(--anchor); border-color: var(--anchor); color: #ffffff; }
+.cohort-tab em { font-style: normal; font-size: 11px; padding: 1px 6px; border-radius: 99px; background: rgba(111, 78, 184, 0.12); color: var(--primary); }
+.cohort-tab.active em { background: rgba(255, 255, 255, 0.20); color: #ffffff; }
+.term-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.term-card { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; background: var(--bg); }
+.term-card.has-exams { border-color: var(--line-strong); }
+.term-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.term-card-head strong { display: block; font-size: 14px; color: var(--ink); }
+.term-card-head small { display: block; font-size: 11.5px; color: var(--muted); margin-top: 1px; }
+.term-card-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.term-count { font-size: 11.5px; color: var(--ink-secondary); font-variant-numeric: tabular-nums; }
+.term-empty { margin: 10px 0 2px; font-size: 12px; color: var(--muted); }
+.term-exam-list { display: grid; gap: 6px; margin-top: 8px; }
+.term-exam-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 8px; border-radius: 6px; background: var(--surface-subtle); }
+.term-exam-main { min-width: 0; }
+.term-exam-link { font-size: 13px; font-weight: 600; text-align: left; }
+.term-exam-meta { display: block; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.term-exam-ops { display: flex; align-items: center; gap: 6px; flex-shrink: 0; flex-wrap: wrap; }
+.pe-tag { color: var(--signal); font-weight: 600; }
+.term-mini-tag { display: inline-block; font-size: 10.5px; font-weight: 550; padding: 0 5px; border-radius: 4px; background: var(--surface-subtle); color: var(--ink-secondary); border: 1px solid var(--line); vertical-align: middle; }
+@media (max-width: 900px) {
+  .term-grid, .import-fields-four { grid-template-columns: 1fr; }
+}
 .anchor-tags { display: flex; gap: 6px; flex-wrap: wrap; }
 .anchor-tags span {
   font-size: 11.5px; padding: 2px 8px; border-radius: 999px;
